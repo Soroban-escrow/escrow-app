@@ -196,6 +196,9 @@ importers:
       '@skillescrow/contract-client':
         specifier: workspace:*
         version: link:../../packages/contract-client
+      '@skillescrow/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@stellar/stellar-sdk':
         specifier: 16.4.1
         version: 16.4.1(debug@4.4.3)
