@@ -1,0 +1,25 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env: { POSTGRES_USER: skillescrow, POSTGRES_PASSWORD: skillescrow, POSTGRES_DB: skillescrow_test }
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U skillescrow" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 26 }
+      - run: npm i -g pnpm@12.16.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @skillescrow/contract-client build
+      - run: pnpm --filter @skillescrow/api exec prisma generate
+      - run: pnpm --filter @skillescrow/api exec prisma migrate deploy
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+      - run: pnpm --filter @skillescrow/web build
