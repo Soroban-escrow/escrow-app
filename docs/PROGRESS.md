@@ -20,5 +20,5 @@ Built locally and pushed to `fresh-build`. API: 109 tests (+6 live-chain/live-re
 
 ## Known limits
 - One PR can be tracked against one bounty (PullRequest.id is the primary key).
-- The relayer loop marks a payout FAILED if the bounty is no longer Open when it retries; the indexer still confirms it from the chain event if the earlier transaction landed.
+- The relayer retry recognises a payment that already landed (bounty Released to the expected winner) and confirms it; a release to anyone else is a failure.
 - The live indexer test reads a ~28 h window of testnet history and will stop finding the smoke events once the RPC retention window passes them.
