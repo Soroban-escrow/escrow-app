@@ -1,0 +1,17 @@
+{
+  "name": "@skillescrow/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:web": "API_INTERNAL_URL=http://localhost:3101 NEXT_PUBLIC_TOKEN_USDC=CUSDCE2E pnpm --filter @skillescrow/web build",
+    "test": "pnpm build:web && playwright test",
+    "typecheck": "tsc -p ."
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
+    "typescript": "^7.0.2"
+  }
+}

@@ -26,7 +26,11 @@ jobs:
       - run: pnpm audit --audit-level=high
       - run: pnpm -r typecheck
       - run: pnpm -r test
-      - run: pnpm --filter @skillescrow/web build
+      - run: pnpm --filter @skillescrow/e2e exec playwright install --with-deps chromium
+      - run: pnpm --filter @skillescrow/e2e test
+        env:
+          E2E_DATABASE_URL: postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test
+          REDIS_URL: redis://localhost:6379/2
   secrets:
     runs-on: ubuntu-latest
     steps:
