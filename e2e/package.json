@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build:web": "API_INTERNAL_URL=http://localhost:3101 NEXT_PUBLIC_TOKEN_USDC=CUSDCE2E pnpm --filter @skillescrow/web build",
-    "test": "pnpm build:web && playwright test",
+    "e2e": "pnpm build:web && playwright test",
     "typecheck": "tsc -p ."
   },
   "devDependencies": {
