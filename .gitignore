@@ -4,3 +4,4 @@ dist/
 .env.*
 !.env.example
 .next/
+.DS_Store
