@@ -52,6 +52,12 @@ test.describe('public pages', () => {
     await noSideScroll(page);
   });
 
+  test('a PR that closes two bounties shows on both', async ({ page }) => {
+    await page.goto('/b/2');
+    await expect(page.locator('.card').first()).toContainText('#3 by contrib');
+    await expect(page.locator('.card').first()).toContainText('Rank 1 of 1');
+  });
+
   test('unknown bounty and unknown profile are 404s', async ({ page }) => {
     expect((await page.goto('/b/999'))?.status()).toBe(404);
     expect((await page.goto('/u/nobody'))?.status()).toBe(404);
