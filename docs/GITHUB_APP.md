@@ -4,6 +4,7 @@ The staging app `skillescrow-staging` is registered and verified (authenticates,
 
 ## Registration (github.com/settings/apps/new)
 - **Homepage URL:** the web URL. **Callback URL:** `<API_PUBLIC_URL>/auth/callback` (must equal exactly what the API sends).
+  - When the web app proxies `/api/*` to the API (as on Vercel), set `API_PUBLIC_URL` to `<web URL>/api`, so the callback is `<web URL>/api/auth/callback`. The login-state cookie is set on the web host, and a callback on a different host cannot see it ("missing login state").
 - **Webhook:** Active; URL `<public API>/github/webhooks` (locally a smee.io relay: `npx smee-client --url https://smee.io/<id> --target http://localhost:3001/github/webhooks`); a random secret = `GITHUB_WEBHOOK_SECRET`.
 - **Repository permissions:** Issues R/W, Pull requests R/W, Contents R, Metadata R. **Organization:** Members R.
 - **Events:** Issues, Issue comment, Pull request.
