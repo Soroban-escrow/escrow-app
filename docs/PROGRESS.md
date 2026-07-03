@@ -22,7 +22,9 @@ Built locally and pushed to `fresh-build`. API: 113 tests (+6 live-chain/live-re
 - `src/github/client.ts`: App JWT -> cached installation tokens, permission lookup, comments, labels, issues, PR files, CI, README. Verified against the real sandbox repo.
 - `src/github/sync.ts`: bounty card posted once and edited in place (per-bounty DB lock), title and criteria from the issue, bounty label, payout/reminder comments.
 - `src/auth/github-login.ts`: OAuth with PKCE and a signed state cookie; `/auth/login`, `/auth/callback`; admin flag from `ADMIN_GITHUB_IDS`.
-- Not yet wired: AI review trigger on PR events (needs the Anthropic key).
+- AI review pipeline (`src/ai/pipeline.ts`, `src/worker/review-queue.ts`): fetches the PR, reviews against the bounty criteria, caps per PR/repo per day, code-enforced injection downgrade, duplicate and CI flags, rank across PRs, one edited comment per PR, 5 minute debounce, `/bounty review`. Tested with a mocked model and real Redis/Postgres. Switches on when `ANTHROPIC_API_KEY` is set; **never run against the real model**.
+- "Paid X to @login (tx)" comment on release (any path), wallet-link sweep wired in the API.
+- **Verified live on testnet + real GitHub:** `/bounty` comment -> funding link -> real funding in Freighter -> indexed -> card and label on the issue. Still to run live: PR from a second account, merge, relayer payout, and the refund and dispute paths.
 
 ## Known limits
 - The relayer retry recognises a payment that already landed (bounty Released to the expected winner) and confirms it; a release to anyone else is a failure.
