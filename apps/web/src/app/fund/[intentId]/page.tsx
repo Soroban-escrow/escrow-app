@@ -59,20 +59,24 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
   const amount = fromBaseUnits(BigInt(intent.amount), 7, 2);
   return (
     <>
+      <p className="eyebrow" style={{ marginTop: '2.5rem' }}>{intent.repo ?? 'repository'} #{intent.issueNumber}</p>
       <h1>Fund bounty</h1>
-      <p><strong>{amount}</strong> on <code>{intent.repo ?? 'repository'}#{intent.issueNumber}</code>, open for {intent.durationDays} days.</p>
+      <section className="panel">
+      <p className="big locked" style={{ display: 'inline-block', margin: 0 }}>{amount}</p>
+      <p className="muted">Held in escrow for {intent.durationDays} days, then refundable if nothing is merged.</p>
       {intent.state === 'expired' && <p className="error" role="alert">{errorText('intent_expired', 'Expired.')}</p>}
       {intent.state === 'used' && <p className="ok">{errorText('intent_used', 'Funded.')} {intent.bountyId && <a href={`/b/${intent.bountyId}`}>View the bounty</a>}</p>}
       {intent.state === 'open' && (
         <>
           {!csrf && <p className="muted">Sign in with GitHub as the person who requested this bounty to continue.</p>}
-          <label><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Pay automatically when I merge a PR (recommended)</label>
+          <label className="check"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Pay automatically when I merge a PR (recommended)</label>
           <p className="muted">{auto ? 'A relayer may release this bounty when you merge, capped by the escrow limits.' : 'You will sign the release yourself after merging.'}</p>
           <button onClick={fund} disabled={!csrf || step !== 'idle'}>{step === 'signing' ? 'Confirm in Freighter…' : step === 'waiting' ? 'Waiting for confirmation…' : 'Connect wallet and fund'}</button>
           {err && <p className="error" role="alert">{err}</p>}
-          <p className="muted">You need a USDC trustline on your account for USDC bounties. We never ask for your secret key.</p>
+          <p className="muted small">You need a USDC trustline on your account for USDC bounties. We never ask for your secret key.</p>
         </>
       )}
+      </section>
     </>
   );
 }
