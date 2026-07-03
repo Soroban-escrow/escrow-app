@@ -1,0 +1,51 @@
+# Render Blueprint: the always-on worker (indexer, webhook consumer, payouts, alerts).
+# The web app and API run on Vercel. Values marked sync: false are asked for once, when the Blueprint is created.
+services:
+  - type: worker
+    name: escrow-worker
+    runtime: node
+    branch: fresh-build
+    buildCommand: >-
+      npm install -g pnpm@12.16.1 &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @skillescrow/contract-client build &&
+      pnpm --filter @skillescrow/api exec prisma generate &&
+      pnpm --filter @skillescrow/api build:worker
+    startCommand: node apps/api/dist/worker.mjs
+    envVars:
+      - key: NODE_VERSION
+        value: "26"
+      - key: NODE_ENV
+        value: production
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: STELLAR_NETWORK_PASSPHRASE
+        value: Test SDF Network ; September 2015
+      - key: BOUNTY_CONTRACT_ID
+        value: CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V
+      - key: WEB_PUBLIC_URL
+        value: https://escrow-web-tau.vercel.app
+      - key: API_PUBLIC_URL
+        value: https://escrow-web-tau.vercel.app/api
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CSRF_SECRET
+        generateValue: true
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
