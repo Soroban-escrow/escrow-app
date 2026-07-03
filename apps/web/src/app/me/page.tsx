@@ -59,7 +59,13 @@ export default function Account() {
   }
 
   if (me === undefined) return <p className="muted">Loading…</p>;
-  if (me === null) return <><h1>Account</h1><p className="lede">You are not signed in.</p><p className="muted">Sign-in with GitHub needs the GitHub App to be registered for this environment.</p></>;
+  if (me === null) return (
+    <>
+      <h1>Account</h1>
+      <p className="lede">You are not signed in.</p>
+      <a className="cta" href="/api/auth/login?next=/me">Sign in with GitHub</a>
+    </>
+  );
   return (
     <>
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>

@@ -12,11 +12,17 @@ Built locally and pushed to `fresh-build`. API: 113 tests (+6 live-chain/live-re
 - **CI**: actions pinned by SHA, gitleaks (checksum-pinned), `pnpm audit`, Playwright, Redis + Postgres services.
 
 ## Not done / blocked on the human
-- GitHub App registration: GitHub OAuth login, the real comment/label/card client, live webhooks, PR/diff fetching for the reviewer. Until then the worker fails GitHub jobs loudly (queue retries) and reminders only log.
+- (GitHub App is registered and verified; the client, card sync and OAuth login are built. See the live-run notes below.)
 - `ANTHROPIC_API_KEY` for `pnpm eval:ai` and the live reviewer.
 - Freighter in a real browser with a USDC trustline (signing is stubbed/untested; e2e covers the no-Freighter error path).
 - Testnet USDC issuer verification (only native XLM is allowlisted on the deployed contract).
 - Mainnet: KMS-backed relayer signer, admin multisig, external audit, 7-day staging soak, backups with a tested restore, hosting/domains/error tracking/alert channel.
+
+## GitHub (built after the App was registered)
+- `src/github/client.ts`: App JWT -> cached installation tokens, permission lookup, comments, labels, issues, PR files, CI, README. Verified against the real sandbox repo.
+- `src/github/sync.ts`: bounty card posted once and edited in place (per-bounty DB lock), title and criteria from the issue, bounty label, payout/reminder comments.
+- `src/auth/github-login.ts`: OAuth with PKCE and a signed state cookie; `/auth/login`, `/auth/callback`; admin flag from `ADMIN_GITHUB_IDS`.
+- Not yet wired: AI review trigger on PR events (needs the Anthropic key).
 
 ## Known limits
 - The relayer retry recognises a payment that already landed (bounty Released to the expected winner) and confirms it; a release to anyone else is a failure.
