@@ -3,3 +3,8 @@ packages:
   - "packages/*"
 overrides:
   lodash: ">=4.18.1"
+allowBuilds:
+  "@prisma/engines": true
+  prisma: true
+  esbuild: false
+  msgpackr-extract: false
