@@ -5,3 +5,6 @@ dist/
 !.env.example
 .next/
 .DS_Store
+.next/
+next-env.d.ts
+*.tsbuildinfo
