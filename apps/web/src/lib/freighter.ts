@@ -1,5 +1,5 @@
 'use client';
-import { getNetworkDetails, isConnected, requestAccess, signMessage } from '@stellar/freighter-api';
+import { getNetworkDetails, isConnected, requestAccess, signMessage, signTransaction } from '@stellar/freighter-api';
 
 export class WalletUxError extends Error {}
 
@@ -20,4 +20,11 @@ export async function signLinkMessage(message: string, address: string, passphra
   if (r.error || !r.signedMessage) throw new WalletUxError('Signing was declined.');
   const m = r.signedMessage as unknown;
   return typeof m === 'string' ? m : Buffer.from(m as Uint8Array).toString('base64');
+}
+
+/** Signs a prepared transaction XDR in Freighter; returns the signed XDR. */
+export async function signTx(xdr: string, address: string, passphrase: string): Promise<string> {
+  const r = await signTransaction(xdr, { networkPassphrase: passphrase, address });
+  if (r.error || !r.signedTxXdr) throw new WalletUxError('Signing was declined.');
+  return r.signedTxXdr;
 }
