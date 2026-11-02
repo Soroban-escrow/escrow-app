@@ -18,7 +18,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'pnpm --filter @skillescrow/api exec tsx src/index.ts',
-      url: 'http://localhost:3101/health', reuseExistingServer: false, stdout: 'pipe', stderr: 'pipe', timeout: 60_000,
+      url: 'http://localhost:3101/bounties', reuseExistingServer: false, stdout: 'pipe', stderr: 'pipe', timeout: 60_000,
       env: { ...secrets, PORT: '3101', DATABASE_URL: E2E_DB, LOG_LEVEL: 'silent', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V', REDIS_URL: process.env.REDIS_URL ?? 'redis://localhost:6379/2' },
     },
     {
