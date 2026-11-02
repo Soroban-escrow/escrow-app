@@ -1,5 +1,5 @@
 # Progress (app)
-Built locally and pushed to `fresh-build`. API: 109 tests (+6 live-chain/live-relayer, run with `LIVE_CHAIN=1`), web: 2 unit + 24 Playwright e2e (desktop and 360 px), Lighthouse mobile 100/100 on `/` and `/b/1`.
+Built locally and pushed to `fresh-build`. API: 113 tests (+6 live-chain/live-relayer, run with `LIVE_CHAIN=1`), web: 2 unit + 26 Playwright e2e (desktop and 360 px), Lighthouse mobile 100/100 on `/` and `/b/1`.
 
 ## Done
 - **shared**: exact amounts, fee math (same vectors as the contract), `/bounty` parser.
@@ -19,6 +19,5 @@ Built locally and pushed to `fresh-build`. API: 109 tests (+6 live-chain/live-re
 - Mainnet: KMS-backed relayer signer, admin multisig, external audit, 7-day staging soak, backups with a tested restore, hosting/domains/error tracking/alert channel.
 
 ## Known limits
-- One PR can be tracked against one bounty (PullRequest.id is the primary key).
 - The relayer retry recognises a payment that already landed (bounty Released to the expected winner) and confirms it; a release to anyone else is a failure.
 - The live indexer test reads a ~28 h window of testnet history and will stop finding the smoke events once the RPC retention window passes them.

@@ -9,7 +9,7 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 export default async function setup() {
   const db = new pg.Client({ connectionString: E2E_DB });
   await db.connect();
-  await db.query('TRUNCATE "AuditLog","Payout","Dispute","AiReview","PullRequest","Bounty","FundingIntent","Repo","Installation","Session","User" CASCADE');
+  await db.query('TRUNCATE "AuditLog","Payout","Dispute","AiReview","PullRequestBounty","PullRequest","Bounty","FundingIntent","Repo","Installation","Session","User" CASCADE');
   await db.query(`INSERT INTO "Installation"(id,"accountLogin","accountType") VALUES (1,'acme','Organization')`);
   await db.query(`INSERT INTO "Repo"(id,"installationId","fullName",private) VALUES (100,1,'acme/widgets',false),(101,1,'acme/gadgets',false)`);
   const bounty = (id: number, repo: number, issue: number, title: string, amount: string, days: number, crit: string[]) =>
@@ -18,7 +18,8 @@ export default async function setup() {
   await bounty(1, 100, 7, 'Retry failed HTTP requests', '500000000', 5, ['Retries 3 times', 'Adds a unit test']);
   await bounty(2, 100, 8, 'Add dark mode', '1200000000', 20, []);
   await bounty(3, 101, 9, 'Fix flaky CI', '250000000', 2, ['CI is green 10 runs in a row']);
-  await db.query(`INSERT INTO "PullRequest"(id,"bountyId",number,"authorGithubId","authorLogin","headSha",state) VALUES (500,1,3,77,'contrib','abc','open'),(501,1,4,78,'second','def','open')`);
+  await db.query(`INSERT INTO "PullRequest"(id,number,"authorGithubId","authorLogin","headSha",state) VALUES (500,3,77,'contrib','abc','open'),(501,4,78,'second','def','open')`);
+  await db.query(`INSERT INTO "PullRequestBounty"("prId","bountyId") VALUES (500,1),(501,1),(500,2)`); // PR 500 closes two bounties
   await db.query(`INSERT INTO "AiReview"(id,"prId","headSha",model,verdict,score,result,flags,"inputTokens","outputTokens") VALUES ('r1',500,'abc','m','likely_meets',88,'{}','{}',1,1),('r2',501,'def','m','partially_meets',55,'{}','{}',1,1)`);
   const mkUser = async (githubId: number, login: string, isAdmin: boolean) => {
     const u = await db.query(`INSERT INTO "User"(id,"githubId","githubLogin","isAdmin","updatedAt") VALUES ($1,$2,$3,$4,now()) RETURNING id`, [`u${githubId}`, githubId, login, isAdmin]);
