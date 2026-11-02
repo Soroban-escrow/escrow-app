@@ -1,8 +1,24 @@
 # Progress (app)
-Built locally and pushed to `fresh-build`. 73 API tests (+2 live-chain, run with LIVE_CHAIN=1), 2 web tests, `next build` passes.
+Built locally and pushed to `fresh-build`. API: 109 tests (+6 live-chain/live-relayer, run with `LIVE_CHAIN=1`), web: 2 unit + 24 Playwright e2e (desktop and 360 px), Lighthouse mobile 100/100 on `/` and `/b/1`.
 
-Done: shared (amounts, fees, /bounty parser) · Prisma schema + migration · chain wrapper · indexer (verified against real testnet events) · /bounty handler · PR tracking · merge-to-payout + relayer job (ports) · wallet linking (SEP-53) · sessions/CSRF/read API · criteria + card · AI reviewer core, Anthropic adapter, 12-case eval set · web pages (/, /b/[id], /u/[login], /me, /install, /docs).
+## Done
+- **shared**: exact amounts, fee math (same vectors as the contract), `/bounty` parser.
+- **API**: config, signed + deduplicated webhooks, sessions (hashed) + CSRF, SEP-53 wallet linking, public read API, funding intents + tx build/submit, maintainer release/refund builders, admin/dispute routes with audit log, per-user rate limits, `/health` (db, RPC, Redis, indexer lag).
+- **Indexer**: decoder, idempotent apply, paged polling, dispute status follows chain events. Verified against real testnet events.
+- **Payouts**: merge-to-payout state machine, relayer signer (testnet env key), serialized release loop with backoff. **Verified with a real testnet release** (funded a bounty, relayer released it once, never twice).
+- **Worker** (`pnpm worker`): BullMQ webhook queue (dedupe by delivery id), dispatcher, installation handling, indexer loop, relayer loop, alert checks (relayer balance, failed payouts, indexer lag, overdue disputes, merged-unpaid near refund), refund reminders.
+- **AI reviewer**: prompt with untrusted-data tagging, schema validation + retry, ranking, dedup hash, Anthropic adapter, 12-case eval set. **Never run against the real model.**
+- **Web**: `/`, `/b/[id]`, `/u/[login]`, `/me` (wallet link, funded bounties, release/refund), `/fund/[intentId]`, `/admin`, `/install`, `/docs`.
+- **CI**: actions pinned by SHA, gitleaks (checksum-pinned), `pnpm audit`, Playwright, Redis + Postgres services.
 
-Not done / blocked on the human: GitHub App registration (OAuth login, comment/label client, real webhooks) · ANTHROPIC_API_KEY (eval:ai never run) · Freighter test with a USDC trustline · USDC issuer verification · mainnet anything.
-Added later: funding intents + tx build/submit API, `/fund/[intentId]` page, maintainer release/refund (API + `/me` buttons), BullMQ webhook queue + dispatcher + installation handling + worker entrypoint (`pnpm worker`; signed webhook -> API -> Redis -> worker -> Postgres verified locally), admin/dispute API (queue, open on chain, resolve, reject, payout retry, status) with audit log.
-Not done / buildable: relayer signer + job scheduling (a retried payout is set QUEUED but nothing enqueues `relayRelease` yet), real GitHub client, admin web UI, observability/alerts beyond `/admin/status`, Playwright e2e, Lighthouse, refund reminder comments, resolve/dispute comment posting.
+## Not done / blocked on the human
+- GitHub App registration: GitHub OAuth login, the real comment/label/card client, live webhooks, PR/diff fetching for the reviewer. Until then the worker fails GitHub jobs loudly (queue retries) and reminders only log.
+- `ANTHROPIC_API_KEY` for `pnpm eval:ai` and the live reviewer.
+- Freighter in a real browser with a USDC trustline (signing is stubbed/untested; e2e covers the no-Freighter error path).
+- Testnet USDC issuer verification (only native XLM is allowlisted on the deployed contract).
+- Mainnet: KMS-backed relayer signer, admin multisig, external audit, 7-day staging soak, backups with a tested restore, hosting/domains/error tracking/alert channel.
+
+## Known limits
+- One PR can be tracked against one bounty (PullRequest.id is the primary key).
+- The relayer loop marks a payout FAILED if the bounty is no longer Open when it retries; the indexer still confirms it from the chain event if the earlier transaction landed.
+- The live indexer test reads a ~28 h window of testnet history and will stop finding the smoke events once the RPC retention window passes them.
