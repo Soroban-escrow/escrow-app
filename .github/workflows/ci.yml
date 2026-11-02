@@ -27,7 +27,7 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm -r test
       - run: pnpm --filter @skillescrow/e2e exec playwright install --with-deps chromium
-      - run: pnpm --filter @skillescrow/e2e test
+      - run: pnpm --filter @skillescrow/e2e e2e
         env:
           E2E_DATABASE_URL: postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test
           REDIS_URL: redis://localhost:6379/2
