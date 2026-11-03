@@ -68,7 +68,7 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
       {intent.state === 'used' && <p className="ok">{errorText('intent_used', 'Funded.')} {intent.bountyId && <a href={`/b/${intent.bountyId}`}>View the bounty</a>}</p>}
       {intent.state === 'open' && (
         <>
-          {!csrf && <p className="muted">Sign in with GitHub as the person who requested this bounty to continue.</p>}
+          {!csrf && <p className="muted"><a href={`/api/auth/login?next=${encodeURIComponent(`/fund/${intentId}`)}`}>Sign in with GitHub</a> as the person who requested this bounty to continue.</p>}
           <label className="check"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Pay automatically when I merge a PR (recommended)</label>
           <p className="muted">{auto ? 'A relayer may release this bounty when you merge, capped by the escrow limits.' : 'You will sign the release yourself after merging.'}</p>
           <button onClick={fund} disabled={!csrf || step !== 'idle'}>{step === 'signing' ? 'Confirm in Freighter…' : step === 'waiting' ? 'Waiting for confirmation…' : 'Connect wallet and fund'}</button>
