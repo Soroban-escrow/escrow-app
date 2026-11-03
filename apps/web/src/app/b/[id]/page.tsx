@@ -1,15 +1,35 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { apiGet, daysLeft, explorerTx, money } from '@/lib/api';
 
+interface Review { verdict: string; score: number; flags: string[] }
 interface Detail {
-  id: string; issueNumber: number; issueTitle: string; issueUrl: string; amount: string; token: string; status: string; deadline: string; maintainer: string;
-  criteria: string[]; relayerAllowed: boolean; repo: { fullName: string };
-  prs: { id: string; number: number; authorLogin: string; state: string; reviews: { verdict: string; score: number; flags: string[] }[] }[];
+  id: string; issueNumber: number; issueTitle: string; issueUrl: string; amount: string; token: string; status: string;
+  deadline: string; maintainer: string; criteria: string[]; relayerAllowed: boolean; feeBps: number; repo: { fullName: string };
+  prs: { id: string; number: number; authorLogin: string; state: string; reviews: Review[] }[];
   payouts: { status: string; prNumber: number; txHash: string | null }[];
 }
 
 const VERDICT: Record<string, string> = { likely_meets: 'Likely meets', partially_meets: 'Partially meets', does_not_meet: 'Does not meet', needs_human: 'Needs a human' };
 const ORDER = ['likely_meets', 'partially_meets', 'does_not_meet', 'needs_human'];
+const STEPS = ['Funded', 'In review', 'Merged', 'Paid'] as const;
+const PAYOUT: Record<string, string> = {
+  PENDING_WALLET: 'Waiting for the author to link a wallet', QUEUED: 'Queued for release', SUBMITTED: 'Release submitted',
+  CONFIRMED: 'Paid', FAILED: 'Failed, an admin is looking at it', AWAITING_MAINTAINER: 'Waiting for the maintainer to sign',
+};
+const NOTICE: Record<string, string> = {
+  REFUNDED: 'Nothing was merged in time, so the maintainer reclaimed the funds.',
+  DISPUTED: 'This bounty is under dispute. Release and refund are frozen until an arbiter decides.',
+  RESOLVED: 'An arbiter resolved a dispute on this bounty and split the funds.',
+};
+
+/** How far along the funded → paid path this bounty is: steps done, and which one is current. */
+function progress(b: Detail): number {
+  if (b.status === 'RELEASED') return 4;
+  if (b.payouts.length) return 2;
+  if (b.prs.length) return 1;
+  return 0;
+}
 
 export default async function Bounty({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -19,22 +39,80 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
     const rx = x.reviews[0], ry = y.reviews[0];
     return (ORDER.indexOf(rx?.verdict ?? 'needs_human') - ORDER.indexOf(ry?.verdict ?? 'needs_human')) || ((ry?.score ?? 0) - (rx?.score ?? 0));
   });
+  const done = progress(b);
+  const deadline = new Date(b.deadline);
+
   return (
     <>
-      <h1>{b.issueTitle || 'Bounty'}</h1>
-      <p className="muted">{b.repo.fullName} · <span className="badge">{b.status}</span> · {daysLeft(b.deadline)}</p>
-      <p><span className="amount">{money(b.amount, b.token)}</span> · release on merge: {b.relayerAllowed ? 'automatic' : 'maintainer signs'}</p>
-      {b.issueUrl && <p><a href={b.issueUrl} rel="noreferrer noopener">View the issue on GitHub</a></p>}
-      {b.criteria.length > 0 && (<><h2>Acceptance criteria</h2><ul>{b.criteria.map((c, i) => <li key={i}>{c}</li>)}</ul></>)}
+      <p className="crumbs"><Link href="/">Bounties</Link> / {b.repo.fullName} / #{b.issueNumber}</p>
+      <h1 className="title">{b.issueTitle || `Issue #${b.issueNumber}`}</h1>
+
+      <div className="hero-amount">
+        <span className={`big${b.status === 'OPEN' ? ' locked' : ''}`}>{money(b.amount, b.token)}</span>
+        <span className={`status ${b.status.toLowerCase()}`}>{b.status === 'RELEASED' ? 'Paid' : b.status.toLowerCase()}</span>
+      </div>
+
+      <dl className="facts">
+        <div><dt>Deadline</dt><dd>{deadline.toISOString().slice(0, 10)}</dd></div>
+        <div><dt>Time left</dt><dd>{daysLeft(b.deadline)}</dd></div>
+        <div><dt>Release on merge</dt><dd>{b.relayerAllowed ? 'automatic' : 'maintainer signs'}</dd></div>
+        <div><dt>Fee</dt><dd>{b.feeBps / 100}% of payout</dd></div>
+      </dl>
+
+      <ol className="steps" aria-label="Progress">
+        {STEPS.map((s, i) => (
+          <li key={s} className={i < done ? 'done' : i === done && b.status === 'OPEN' ? 'now' : ''} aria-current={i === done && b.status === 'OPEN' ? 'step' : undefined}>{s}</li>
+        ))}
+      </ol>
+      {NOTICE[b.status] && <p className="notice">{NOTICE[b.status]}</p>}
+
+      {b.criteria.length > 0 && (
+        <>
+          <h2>Acceptance criteria</h2>
+          <ol className="criteria">{b.criteria.map((c, i) => <li key={i}>{c}</li>)}</ol>
+        </>
+      )}
+
       <h2>Pull requests</h2>
-      {prs.length === 0 ? <p className="muted">No PRs yet. Open one that says <code>Closes #{b.issueNumber}</code> for this issue.</p> : prs.map((p, i) => (
-        <div key={p.id} className="card"><div className="row"><span>#{p.number} by {p.authorLogin}</span><span className="badge">{p.state}</span></div>
-          <div className="muted">Rank {i + 1} of {prs.length}{p.reviews[0] ? ` · AI: ${VERDICT[p.reviews[0].verdict] ?? p.reviews[0].verdict} (${p.reviews[0].score}), advisory only` : ' · not reviewed yet'}</div></div>
-      ))}
+      {prs.length === 0 ? (
+        <p className="muted">No pull requests yet. Open one that says <code>Closes #{b.issueNumber}</code>, and link your wallet on the Account page before it is merged.</p>
+      ) : (
+        <>
+          <p className="muted small">Ranked by an AI review against the criteria. It is advisory only; the maintainer decides by merging.</p>
+          <ol className="prs">
+            {prs.map((p, i) => {
+              const r = p.reviews[0];
+              return (
+                <li key={p.id} className="card pr-row">
+                  <span className="rank" aria-hidden="true">{i + 1}</span>
+                  <span>
+                    <span className="pr-title">#{p.number} by {p.authorLogin}</span>
+                    <span className="muted small"> · Rank {i + 1} of {prs.length} · {p.state}</span>
+                  </span>
+                  <span className={`verdict ${r?.verdict ?? ''}`}>{r ? `${VERDICT[r.verdict] ?? r.verdict} (${r.score})` : 'Not reviewed yet'}</span>
+                  {r && <span className="score" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, r.score))}%` }} /></span>}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
+
       <h2>Payout</h2>
-      {b.payouts.length === 0 ? <p className="muted">Nothing paid yet.</p> : b.payouts.map((p, i) => (
-        <p key={i}>PR #{p.prNumber}: {p.status}{p.txHash && <> · <a href={explorerTx(p.txHash)} rel="noreferrer noopener">transaction</a></>}</p>
-      ))}
+      {b.payouts.length === 0 ? (
+        <p className="muted">Nothing paid yet. Funds stay in escrow until a linked PR is merged.</p>
+      ) : (
+        <ul className="payouts">
+          {b.payouts.map((p, i) => (
+            <li key={i}>
+              <span>PR #{p.prNumber}: {PAYOUT[p.status] ?? p.status}</span>
+              {p.txHash && <a className="mono" href={explorerTx(p.txHash)} rel="noreferrer noopener">tx {p.txHash.slice(0, 8)}… ↗</a>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {b.issueUrl && <p className="small" style={{ marginTop: '2rem' }}><a href={b.issueUrl} rel="noreferrer noopener">View the issue on GitHub ↗</a></p>}
     </>
   );
 }

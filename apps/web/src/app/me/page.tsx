@@ -59,9 +59,10 @@ export default function Account() {
   }
 
   if (me === undefined) return <p className="muted">Loading…</p>;
-  if (me === null) return <><h1>Account</h1><p>You are not signed in.</p><p className="muted">Sign-in with GitHub needs the GitHub App to be registered for this environment.</p></>;
+  if (me === null) return <><h1>Account</h1><p className="lede">You are not signed in.</p><p className="muted">Sign-in with GitHub needs the GitHub App to be registered for this environment.</p></>;
   return (
     <>
+      <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
       <h1>{me.login}</h1>
       <h2>Wallet</h2>
       {me.wallet ? <p>Linked: <code>{me.wallet}</code></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
@@ -71,8 +72,8 @@ export default function Account() {
       {funded.length === 0 ? <p className="muted">Nothing funded from this wallet yet.</p> : funded.map((f) => (
         <div key={f.id} className="card">
           <div className="row"><a href={`/b/${f.id}`}>{f.issueTitle || `Bounty ${f.id}`}</a><span className="badge">{f.status}</span></div>
-          <div className="row muted"><span>{fromBaseUnits(BigInt(f.amount), 7, 2)}</span>
-            {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
+          <div className="row muted"><span className="amount">{fromBaseUnits(BigInt(f.amount), 7, 2)}</span>
+            {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
         </div>
       ))}
       <p className="muted">We never ask for your secret key; you only sign a message in Freighter.</p>
