@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { apiGet, daysLeft, explorerTx, money } from '@/lib/api';
+import { apiGetWithMeta, daysLeft, explorerTx, money } from '@/lib/api';
 
 interface Review { verdict: string; score: number; flags: string[] }
 interface Detail {
@@ -33,7 +33,7 @@ function progress(b: Detail): number {
 
 export default async function Bounty({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const b = await apiGet<Detail>(`/bounties/${encodeURIComponent(id)}`);
+  const { data: b, stale } = await apiGetWithMeta<Detail>(`/bounties/${encodeURIComponent(id)}`);
   if (!b) notFound();
   const prs = [...b.prs].sort((x, y) => {
     const rx = x.reviews[0], ry = y.reviews[0];
@@ -44,6 +44,11 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
 
   return (
     <>
+      {stale && (
+        <p className="notice" role="note">
+          Data may be out of date — showing last cached snapshot while the API reconnects.
+        </p>
+      )}
       <p className="crumbs"><Link href="/">Bounties</Link> / {b.repo.fullName} / #{b.issueNumber}</p>
       <h1 className="title">{b.issueTitle || `Issue #${b.issueNumber}`}</h1>
 
