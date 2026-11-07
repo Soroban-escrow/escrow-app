@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { apiGet, daysLeft, money, plural, timeLeftFraction, totals, type BountySummary } from '@/lib/api';
+import { apiGetWithMeta, daysLeft, money, plural, timeLeftFraction, totals, type BountySummary } from '@/lib/api';
 
 type Search = { sort?: string; q?: string; minAmount?: string; cursor?: string };
 
@@ -8,12 +8,17 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const qs = new URLSearchParams();
   for (const k of ['sort', 'q', 'cursor'] as const) if (sp[k]) qs.set(k, sp[k]!);
   if (sp.minAmount && /^\d+(\.\d{1,7})?$/.test(sp.minAmount)) qs.set('minAmount', String(BigInt(Math.round(Number(sp.minAmount) * 1e7))));
-  const data = await apiGet<{ items: BountySummary[]; nextCursor: string | null }>(`/bounties?${qs}`);
+  const { data, stale } = await apiGetWithMeta<{ items: BountySummary[]; nextCursor: string | null }>(`/bounties?${qs}`);
   const filtered = Boolean(sp.q || sp.minAmount);
   const items = data?.items ?? [];
 
   return (
     <>
+      {stale && (
+        <p className="notice" role="note">
+          Data may be out of date — showing last cached snapshot while the API reconnects.
+        </p>
+      )}
       <section className="hero">
         <p className="eyebrow">Paid GitHub issues · settled on Stellar</p>
         <h1 className="display">Merge is the <em>approval</em>.</h1>

@@ -1,6 +1,7 @@
 import { loadConfig, loadDotEnv } from '../config.js';
 import { createChain } from '../chain/client.js';
 import { createDb } from '../db.js';
+import { notifyBountyRevalidate } from '../indexer/apply.js';
 import { run as runIndexer } from '../indexer/indexer.js';
 import { alertSender, collectAlerts } from '../ops/alerts.js';
 import { sendRefundReminders } from '../ops/reminders.js';
@@ -80,15 +81,18 @@ const alertTimer = setInterval(async () => {
 }, 60_000);
 const w = webhookWorker(cfg.REDIS_URL, async (job) => log('webhook handled', { id: job.id, event: job.event, result: await dispatchWebhook(deps as never, job.event, job.payload) }));
 w.worker.on('failed', (j, e) => log('webhook job failed', { id: j?.id, error: e.message }));
-// every chain event for a bounty refreshes its GitHub card (best effort; the chain is the truth)
-const onApplied = ghClient
-  ? ({ bountyId, kind }: { bountyId: bigint; kind: string }) => {
-      const sync = { db, gh: ghClient, webUrl: cfg.WEB_PUBLIC_URL, symbolFor, log };
-      const fail = (what: string) => (e: unknown) => log(`${what} failed`, e instanceof Error ? e.message : String(e));
-      if (kind === 'released') void announcePayout({ ...sync, explorerTx: (h) => cfg.EXPLORER_TX_URL_TEMPLATE.replace('{hash}', encodeURIComponent(h)) }, bountyId).catch(fail('payout announcement'));
-      void refreshBountyCard(sync, bountyId).catch(fail('card refresh'));
-    }
-  : undefined;
-void runIndexer({ db, server: chain.server, contractId: cfg.BOUNTY_CONTRACT_ID, log, ...(onApplied ? { onApplied } : {}) }, ac.signal);
+// every chain event for a bounty purges the web cache and refreshes its GitHub card (best effort; the chain is the truth)
+const onApplied = ({ bountyId, kind }: { bountyId: bigint; kind: string }) => {
+  const fail = (what: string) => (e: unknown) => log(`${what} failed`, e instanceof Error ? e.message : String(e));
+  if (cfg.REVALIDATE_SECRET) {
+    void notifyBountyRevalidate(bountyId, { webUrl: cfg.WEB_PUBLIC_URL, secret: cfg.REVALIDATE_SECRET, log }).catch(fail('cache revalidation'));
+  }
+  if (ghClient) {
+    const sync = { db, gh: ghClient, webUrl: cfg.WEB_PUBLIC_URL, symbolFor, log };
+    if (kind === 'released') void announcePayout({ ...sync, explorerTx: (h) => cfg.EXPLORER_TX_URL_TEMPLATE.replace('{hash}', encodeURIComponent(h)) }, bountyId).catch(fail('payout announcement'));
+    void refreshBountyCard(sync, bountyId).catch(fail('card refresh'));
+  }
+};
+void runIndexer({ db, server: chain.server, contractId: cfg.BOUNTY_CONTRACT_ID, log, onApplied }, ac.signal);
 for (const s of ['SIGINT', 'SIGTERM'] as const) process.on(s, () => { ac.abort(); clearInterval(alertTimer); clearInterval(reminderTimer); void Promise.all([w.close(), reviewConsumer?.close(), reviews?.close()]).then(() => process.exit(0)); });
 log('worker started');

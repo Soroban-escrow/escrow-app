@@ -1,12 +1,17 @@
 import { notFound } from 'next/navigation';
-import { apiGet, explorerTx, money } from '@/lib/api';
+import { apiGetWithMeta, explorerTx, money } from '@/lib/api';
 
 export default async function Profile({ params }: { params: Promise<{ login: string }> }) {
   const { login } = await params;
-  const u = await apiGet<{ login: string; paid: { bounty: { id: string; issueTitle: string; amount: string; token: string }; txHash: string | null }[] }>(`/users/${encodeURIComponent(login)}`);
+  const { data: u, stale } = await apiGetWithMeta<{ login: string; paid: { bounty: { id: string; issueTitle: string; amount: string; token: string }; txHash: string | null }[] }>(`/users/${encodeURIComponent(login)}`);
   if (!u) notFound();
   return (
     <>
+      {stale && (
+        <p className="notice" role="note">
+          Data may be out of date — showing last cached snapshot while the API reconnects.
+        </p>
+      )}
       <h1>{u.login}</h1>
       <h2>Paid bounties</h2>
       {u.paid.length === 0 ? <p className="muted">None yet.</p> : u.paid.map((p) => (

@@ -15,6 +15,7 @@ const schema = z.object({
   SESSION_SECRET: z.string().min(32),
   CSRF_SECRET: z.string().min(32),
   GITHUB_WEBHOOK_SECRET: z.string().min(8),
+  REVALIDATE_SECRET: z.string().min(16).optional(),
   // GitHub App (docs/GITHUB_APP.md). All optional until registered; all-or-none once any is set.
   GITHUB_APP_ID: z.string().regex(/^\d+$/).optional(),
   GITHUB_APP_SLUG: z.string().min(1).optional(),
