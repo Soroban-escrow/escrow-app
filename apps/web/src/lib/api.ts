@@ -1,19 +1,46 @@
 import { fromBaseUnits } from '@skillescrow/shared/src/amounts';
 
 const API = process.env.API_INTERNAL_URL ?? 'http://localhost:3001';
+const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface BountySummary {
   id: string; issueNumber: number; issueTitle: string; issueUrl: string; amount: string; token: string; status: string;
   deadline: string; createdAt: string; repo: { fullName: string }; _count: { prs: number };
 }
 
-/** Server-side fetch of the public API. Returns null on any failure so pages render an error state. */
-export async function apiGet<T>(path: string): Promise<T | null> {
+export type ApiResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; kind: 'not_found' | 'unavailable' | 'invalid'; status?: number };
+
+/** Server-side fetch of the public API returning a discriminated result. */
+export async function apiGet<T>(path: string, options?: { timeoutMs?: number }): Promise<ApiResult<T>> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const signal = typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
+    ? AbortSignal.timeout(timeoutMs)
+    : undefined;
+
   try {
-    const r = await fetch(`${API}${path}`, { cache: 'no-store' });
-    return r.ok ? ((await r.json()) as T) : null;
+    const r = await fetch(`${API}${path}`, {
+      cache: 'no-store',
+      signal,
+    });
+
+    if (r.status === 404) {
+      return { ok: false, kind: 'not_found', status: 404 };
+    }
+
+    if (!r.ok) {
+      return { ok: false, kind: 'unavailable', status: r.status };
+    }
+
+    try {
+      const data = (await r.json()) as T;
+      return { ok: true, data };
+    } catch {
+      return { ok: false, kind: 'invalid', status: r.status };
+    }
   } catch {
-    return null;
+    return { ok: false, kind: 'unavailable' };
   }
 }
 
