@@ -1,13 +1,12 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { apiGet, daysLeft, explorerTx, money } from '@/lib/api';
+import { apiGet, daysLeft, explorerTx, money, type Detail } from '@/lib/api';
+import { buildBountyMetadata } from '@/lib/metadata';
 
-interface Review { verdict: string; score: number; flags: string[] }
-interface Detail {
-  id: string; issueNumber: number; issueTitle: string; issueUrl: string; amount: string; token: string; status: string;
-  deadline: string; maintainer: string; criteria: string[]; relayerAllowed: boolean; feeBps: number; repo: { fullName: string };
-  prs: { id: string; number: number; authorLogin: string; state: string; reviews: Review[] }[];
-  payouts: { status: string; prNumber: number; txHash: string | null }[];
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  return buildBountyMetadata(id);
 }
 
 const VERDICT: Record<string, string> = { likely_meets: 'Likely meets', partially_meets: 'Partially meets', does_not_meet: 'Does not meet', needs_human: 'Needs a human' };

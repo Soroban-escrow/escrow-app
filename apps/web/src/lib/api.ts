@@ -7,6 +7,14 @@ export interface BountySummary {
   deadline: string; createdAt: string; repo: { fullName: string }; _count: { prs: number };
 }
 
+export interface Review { verdict: string; score: number; flags: string[] }
+export interface Detail {
+  id: string; issueNumber: number; issueTitle: string; issueUrl: string; amount: string; token: string; status: string;
+  deadline: string; maintainer: string; criteria: string[]; relayerAllowed: boolean; feeBps: number; repo: { fullName: string };
+  prs: { id: string; number: number; authorLogin: string; state: string; reviews: Review[] }[];
+  payouts: { status: string; prNumber: number; txHash: string | null }[];
+}
+
 /** Server-side fetch of the public API. Returns null on any failure so pages render an error state. */
 export async function apiGet<T>(path: string): Promise<T | null> {
   try {
