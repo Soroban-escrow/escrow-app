@@ -251,7 +251,6 @@ describe('mutation testing (floor division vs round-to-nearest)', () => {
     expect(canonicalFee2).toBe(0n);
     expect(mutatedFee2).toBe(1n);
 
-    // Requirement: A mutation (change the rounding from floor to round) is caught by at least two tests.
     expect(caughtCount).toBeGreaterThanOrEqual(2);
   });
 });
