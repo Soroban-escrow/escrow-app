@@ -8,8 +8,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const qs = new URLSearchParams();
   for (const k of ['sort', 'q', 'cursor'] as const) if (sp[k]) qs.set(k, sp[k]!);
   if (sp.minAmount && /^\d+(\.\d{1,7})?$/.test(sp.minAmount)) qs.set('minAmount', String(BigInt(Math.round(Number(sp.minAmount) * 1e7))));
-  const data = await apiGet<{ items: BountySummary[]; nextCursor: string | null }>(`/bounties?${qs}`);
+  const res = await apiGet<{ items: BountySummary[]; nextCursor: string | null }>(`/bounties?${qs}`);
   const filtered = Boolean(sp.q || sp.minAmount);
+  const data = res.ok ? res.data : null;
   const items = data?.items ?? [];
 
   return (

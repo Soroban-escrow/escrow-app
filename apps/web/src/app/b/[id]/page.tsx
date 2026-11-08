@@ -33,8 +33,32 @@ function progress(b: Detail): number {
 
 export default async function Bounty({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const b = await apiGet<Detail>(`/bounties/${encodeURIComponent(id)}`);
-  if (!b) notFound();
+  const res = await apiGet<Detail>(`/bounties/${encodeURIComponent(id)}`);
+
+  if (!res.ok) {
+    if (res.kind === 'not_found') {
+      notFound();
+    }
+
+    return (
+      <section>
+        <h1 className="title">Bounty temporarily unavailable</h1>
+        <p className="notice" role="alert">
+          We could not reach the escrow API service to load this bounty. Please check back shortly.
+        </p>
+        <p style={{ marginTop: '1.5rem' }}>
+          <Link href={`/b/${id}`} className="cta" style={{ marginRight: '1rem' }}>
+            Try again
+          </Link>
+          <Link href="/" className="muted">
+            Back to open bounties
+          </Link>
+        </p>
+      </section>
+    );
+  }
+
+  const b = res.data;
   const prs = [...b.prs].sort((x, y) => {
     const rx = x.reviews[0], ry = y.reviews[0];
     return (ORDER.indexOf(rx?.verdict ?? 'needs_human') - ORDER.indexOf(ry?.verdict ?? 'needs_human')) || ((ry?.score ?? 0) - (rx?.score ?? 0));
