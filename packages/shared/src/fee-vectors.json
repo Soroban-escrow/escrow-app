@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Soroban Escrow Canonical Fee & Amount Vectors",
+  "description": "Cross-repository canonical test vectors ensuring mathematical parity between TypeScript clients, Soroban Rust smart contracts (bounty_escrow), and the backend.",
+  "version": "1.0.0",
+  "constants": {
+    "BPS": "10000",
+    "MAX_FEE_BPS": 1000,
+    "TOKEN_DECIMALS": 7,
+    "I128_MAX": "170141183460469231731687303715884105727"
+  },
+  "fee_vectors": [
+    {
+      "description": "Minimal non-zero unit at standard 300 bps (3% fee rounds down to 0)",
+      "amount": "1",
+      "bps": 300,
+      "expected_fee": "0",
+      "expected_net": "1"
+    },
+    {
+      "description": "1 XLM/USDC base unit (10^7) with 1 bps (0.01%) fee",
+      "amount": "1000000",
+      "bps": 1,
+      "expected_fee": "100",
+      "expected_net": "999900"
+    },
+    {
+      "description": "1 XLM/USDC base unit (10^7) with max fee 1000 bps (10%)",
+      "amount": "1000000",
+      "bps": 1000,
+      "expected_fee": "100000",
+      "expected_net": "900000"
+    },
+    {
+      "description": "Boundary just below 1 unit fee threshold at 300 bps (33 * 300 = 9900 < 10000)",
+      "amount": "33",
+      "bps": 300,
+      "expected_fee": "0",
+      "expected_net": "33"
+    },
+    {
+      "description": "Boundary at 1 unit fee threshold at 300 bps (34 * 300 = 10200 >= 10000)",
+      "amount": "34",
+      "bps": 300,
+      "expected_fee": "1",
+      "expected_net": "33"
+    },
+    {
+      "description": "Zero amount yields zero fee and zero net",
+      "amount": "0",
+      "bps": 300,
+      "expected_fee": "0",
+      "expected_net": "0"
+    },
+    {
+      "description": "Zero bps yields zero fee and full amount as net",
+      "amount": "50000000",
+      "bps": 0,
+      "expected_fee": "0",
+      "expected_net": "50000000"
+    },
+    {
+      "description": "Full 10,000 bps (100%) fee equals the entire amount",
+      "amount": "50000000",
+      "bps": 10000,
+      "expected_fee": "50000000",
+      "expected_net": "0"
+    },
+    {
+      "description": "Maximum calculable amount at 10,000 bps without overflowing i128::MAX (i128::MAX / 10000)",
+      "amount": "17014118346046923173168730371588410",
+      "bps": 10000,
+      "expected_fee": "17014118346046923173168730371588410",
+      "expected_net": "0"
+    },
+    {
+      "description": "Amount one unit above safe threshold at 10,000 bps triggers checked arithmetic overflow",
+      "amount": "17014118346046923173168730371588411",
+      "bps": 10000,
+      "overflow": true
+    },
+    {
+      "description": "Full i128::MAX at 10,000 bps triggers checked arithmetic overflow",
+      "amount": "170141183460469231731687303715884105727",
+      "bps": 10000,
+      "overflow": true
+    }
+  ],
+  "portion_vectors": [
+    {
+      "description": "Portion calculation for 3 units with 33.33% winner split: 3 * 3333 = 9999 < 10000",
+      "amount": "3",
+      "bps": 3333,
+      "expected_portion": "0"
+    },
+    {
+      "description": "Portion calculation for 4 units with 33.33% winner split: 4 * 3333 = 13332 / 10000 = 1",
+      "amount": "4",
+      "bps": 3333,
+      "expected_portion": "1"
+    },
+    {
+      "description": "Even 50/50 split of 100 units",
+      "amount": "100",
+      "bps": 5000,
+      "expected_portion": "50"
+    }
+  ],
+  "amount_vectors": [
+    {
+      "raw": "50.5",
+      "decimals": 7,
+      "expected_base": "505000000",
+      "normalised": "50.5"
+    },
+    {
+      "raw": "0.0000001",
+      "decimals": 7,
+      "expected_base": "1",
+      "normalised": "0.0000001"
+    },
+    {
+      "raw": "0",
+      "decimals": 7,
+      "expected_base": "0",
+      "normalised": "0"
+    },
+    {
+      "raw": "50.00",
+      "decimals": 7,
+      "expected_base": "500000000",
+      "normalised": "50"
+    },
+    {
+      "raw": "1000",
+      "decimals": 7,
+      "expected_base": "10000000000",
+      "normalised": "1000"
+    }
+  ]
+}
