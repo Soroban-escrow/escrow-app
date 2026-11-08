@@ -77,13 +77,11 @@ export function errorText(code: string | undefined | null, fallback: string): st
     return fallback;
   }
 
-  // 1. Direct match in TEXT (covers contract_<Name>, <Name>, and app codes)
   const direct = TEXT[code as keyof typeof TEXT];
   if (direct) {
     return direct;
   }
 
-  // 2. Numeric representation: Error(Contract, #N), contract_N, #N, or raw integer string N
   const match = code.match(/(?:Error\(Contract,\s*#?|contract_|^#?)(\d+)\)?/i);
   if (match && match[1]) {
     const num = Number(match[1]);
@@ -96,7 +94,6 @@ export function errorText(code: string | undefined | null, fallback: string): st
     }
   }
 
-  // 3. Fallback for unknown codes; log once in non-production development
   if (process.env.NODE_ENV !== 'production') {
     if (!loggedUnknownCodes.has(code)) {
       loggedUnknownCodes.add(code);
