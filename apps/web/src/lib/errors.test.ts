@@ -12,26 +12,17 @@ import {
   _resetLoggedUnknownCodes,
 } from './errors';
 
-// ---------------------------------------------------------------------------
-// 1. Type-Level Acceptance Tests
-// ---------------------------------------------------------------------------
-// Compile-time check ensuring every member of ContractErrorName is present
-// in CONTRACT_ERROR_TEXT with zero missing keys.
+// Compile-time check ensuring every member of ContractErrorName is mapped
 type Assert<T extends true> = T;
 type ExpectNever<T extends never> = T;
 
-// 1. Verifies at compile time that CONTRACT_ERROR_TEXT has NO missing keys from ContractErrorName:
 type MissingFromText = Exclude<ContractErrorName, keyof typeof CONTRACT_ERROR_TEXT>;
 type _NoMissingKeys = ExpectNever<MissingFromText>;
 
-// 2. Verifies at compile time that all keys in CONTRACT_ERROR_TEXT are valid ContractErrorNames:
 type ExtraKeys = Exclude<keyof typeof CONTRACT_ERROR_TEXT, ContractErrorName>;
 type _NoExtraKeys = ExpectNever<ExtraKeys>;
 
-// ---------------------------------------------------------------------------
-// 2. Runtime Acceptance Tests
-// ---------------------------------------------------------------------------
-describe('contract error mappings & user-facing messages (Issue #18)', () => {
+describe('contract error mappings & user-facing messages', () => {
   beforeEach(() => {
     _resetLoggedUnknownCodes();
     vi.restoreAllMocks();
@@ -66,19 +57,10 @@ describe('contract error mappings & user-facing messages (Issue #18)', () => {
       const fallback = 'DEFAULT_FALLBACK';
       const expectedText = CONTRACT_ERROR_TEXT[name];
 
-      // Format 1: Error(Contract, #N)
       expect(errorText(`Error(Contract, #${num})`, fallback)).toBe(expectedText);
-
-      // Format 2: Error(Contract, N)
       expect(errorText(`Error(Contract, ${num})`, fallback)).toBe(expectedText);
-
-      // Format 3: contract_N
       expect(errorText(`contract_${num}`, fallback)).toBe(expectedText);
-
-      // Format 4: #N
       expect(errorText(`#${num}`, fallback)).toBe(expectedText);
-
-      // Format 5: raw integer string N
       expect(errorText(String(num), fallback)).toBe(expectedText);
     }
   });
