@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fee, fromBaseUnits, net, parseCommand, parseStatus, portion, toBaseUnits } from './index.js';
+import { checkWalletBalances, fee, fromBaseUnits, net, parseCommand, parseStatus, portion, toBaseUnits } from './index.js';
 
 describe('amounts', () => {
   it('converts both ways', () => {
@@ -63,5 +63,35 @@ describe('parseCommand', () => {
     expect(parseCommand('/bounty review')).toEqual({ kind: 'review' });
     expect(parseCommand('/bounty')).toEqual({ kind: 'help' });
     expect(parseCommand('/bounty help')).toEqual({ kind: 'help' });
+  });
+});
+
+describe('checkWalletBalances (readiness)', () => {
+  it('flags unfunded account', () => {
+    const res = checkWalletBalances(undefined);
+    expect(res.funded).toBe(false);
+    expect(res.ready).toBe(false);
+    expect(res.warnings[0]).toContain('not funded');
+  });
+
+  it('detects funded account with XLM but missing USDC trustline', () => {
+    const res = checkWalletBalances([{ assetType: 'native', balance: '10.5' }]);
+    expect(res.funded).toBe(true);
+    expect(res.hasXlm).toBe(true);
+    expect(res.hasUsdcTrustline).toBe(false);
+    expect(res.ready).toBe(false);
+    expect(res.warnings[0]).toContain('USDC trustline');
+  });
+
+  it('approves wallet when funded and has USDC trustline', () => {
+    const res = checkWalletBalances([
+      { assetType: 'native', balance: '25.0' },
+      { assetType: 'credit_alphanum4', code: 'USDC', balance: '0.00' }
+    ]);
+    expect(res.funded).toBe(true);
+    expect(res.hasXlm).toBe(true);
+    expect(res.hasUsdcTrustline).toBe(true);
+    expect(res.ready).toBe(true);
+    expect(res.warnings).toHaveLength(0);
   });
 });
