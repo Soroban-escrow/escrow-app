@@ -1,5 +1,12 @@
+import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { apiGet, explorerTx, money } from '@/lib/api';
+import { buildProfileMetadata } from '@/lib/metadata';
+
+export async function generateMetadata({ params }: { params: Promise<{ login: string }> }): Promise<Metadata> {
+  const { login } = await params;
+  return buildProfileMetadata(login);
+}
 
 export default async function Profile({ params }: { params: Promise<{ login: string }> }) {
   const { login } = await params;
