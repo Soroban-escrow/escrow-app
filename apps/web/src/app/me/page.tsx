@@ -58,6 +58,18 @@ export default function Account() {
     } finally { setBusy(false); }
   }
 
+  async function signOut() {
+    if (!me) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/auth/logout', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': me.csrfToken }, body: '{}' });
+      if (!r.ok) throw new Error('logout failed');
+      setMe(null); setFunded([]);
+    } catch {
+      setMsg({ ok: false, text: 'Could not sign out. Please try again.' });
+    } finally { setBusy(false); }
+  }
+
   if (me === undefined) return <p className="muted">Loading…</p>;
   if (me === null) return (
     <>
@@ -83,6 +95,7 @@ export default function Account() {
         </div>
       ))}
       <p className="muted">We never ask for your secret key; you only sign a message in Freighter.</p>
+      <button className="ghost" disabled={busy} onClick={signOut}>Sign out</button>
     </>
   );
 }
