@@ -29,5 +29,8 @@ describe.runIf(LIVE_GITHUB && LIVE_REPO && LIVE_ISSUE && LIVE_INSTALLATION && LI
     await gh.setBountyLabel(inst, repo, issue, 'bounty: 7 XLM');
     const after = await fetch(`https://api.github.com/repos/${repo}/issues/${issue}`).then((r) => r.json() as Promise<{ labels: { name: string }[] }>);
     expect(after.labels.map((l) => l.name).filter((n) => n.startsWith('bounty:'))).toEqual(['bounty: 7 XLM']);
+    await gh.clearBountyLabel(inst, repo, issue);
+    const cleared = await fetch(`https://api.github.com/repos/${repo}/issues/${issue}`).then((r) => r.json() as Promise<{ labels: { name: string }[] }>);
+    expect(cleared.labels.map((l) => l.name).filter((n) => n.startsWith('bounty:'))).toEqual([]);
   });
 });
