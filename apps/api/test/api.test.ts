@@ -110,6 +110,28 @@ describe('public reads', () => {
     expect((await a.inject('/bounties?status=RELEASED')).json().items).toHaveLength(1);
     expect((await a.inject('/bounties?status=bogus')).statusCode).toBe(400);
   });
+  it('filters by token, repository, and combined status; exposes available filter options', async () => {
+    const a = await app();
+    await db.repo.create({ data: { id: 101n, installationId: 1n, fullName: 'o/Other', private: false } });
+    await bounty(1n, { token: 'TOKEN_A', status: 'OPEN' });
+    await bounty(2n, { token: 'TOKEN_B', status: 'RELEASED' });
+    await db.bounty.create({ data: { id: 3n, repoId: 101n, issueNumber: 3, issueTitle: 'Third', issueUrl: '', criteria: [], maintainer: 'GM', token: 'TOKEN_A', amount: '3000', feeBps: 300, deadline: new Date(2030, 0, 3), relayerAllowed: true, status: 'DISPUTED', fundTx: 't', createdAt: new Date(), updatedAt: new Date() } });
+    expect((await a.inject('/bounties?token=TOKEN_A&repo=o%2FRepo&status=OPEN')).json().items.map((x: { id: string }) => x.id)).toEqual(['1']);
+    expect((await a.inject('/bounties?status=ALL')).json().items).toHaveLength(3);
+    expect((await a.inject('/filters')).json()).toEqual({ statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: ['TOKEN_A', 'TOKEN_B'], repositories: ['o/Other', 'o/Repo'] });
+  });
+  it('publishes live contract fee and token precision and limits', async () => {
+    const a = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+      db, csrfSecret: cfg.CSRF_SECRET, tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6 }],
+      chain: {
+        getConfig: async () => ({ fee_bps: 275, grace_secs: 3600n, min_duration_secs: 86400n, max_duration_secs: 2592000n }),
+        getTokenLimits: async () => ({ min_amount: 100n, max_amount: 999999n }),
+        buildFundTx: async () => '', buildReleaseTx: async () => '', buildRefundTx: async () => '', submitSigned: async () => '', getBounty: async () => ({ status: 'Open' }),
+        buildOpenDisputeTx: async () => '', buildResolveTx: async () => '',
+      },
+    });
+    expect((await a.inject('/config')).json()).toEqual({ feeBps: 275, graceSecs: '3600', minDurationSecs: '86400', maxDurationSecs: '2592000', tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6, minAmount: '100', maxAmount: '999999' }] });
+  });
   it('bounty detail: 404s and a 200 with PRs and payouts', async () => {
     const a = await app();
     await bounty(1n);

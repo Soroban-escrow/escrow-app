@@ -307,8 +307,9 @@ Pausing blocks **new funding only**. Refunds and dispute resolution always work 
 
 ### Fees
 
-3% of the payout, charged to the maintainer, snapshotted when the bounty is funded so a later fee
-change cannot alter it. Refunds are free. Rounding dust always goes to the contributor.
+The fee is configured by the escrow contract and snapshotted when the bounty is funded so a later fee
+change cannot alter it. Refunds are free. Rounding dust always goes to the contributor. The app reads
+the current fee and token precision from the API rather than assuming a fixed fee or token decimals.
 
 ```
 50.00 USDC escrowed → 48.50 to the contributor + 1.50 to the treasury
@@ -335,6 +336,12 @@ The relayer processes payouts one at a time — a single signing account, so seq
 | RPC/network failure | Retried with exponential backoff, up to 5 attempts |
 | Contract rejects (e.g. `InvalidStatus`) | Marked failed immediately — retrying cannot help — and surfaced in `/admin` |
 | Merged but unpaid, refund window approaching | Admins alerted so an arbiter can step in |
+
+### Contract errors shown in the app
+
+The web app derives this list from the generated contract client error enum. Every generated error must have a non-empty user-facing explanation or the web typecheck fails. Numeric Soroban errors such as `Error(Contract, #13)` use the same message as their named form.
+
+`AlreadyInitialized`, `NotInitialized`, `Unauthorized`, `Paused`, `TokenNotAllowed`, `AmountTooSmall`, `AmountTooLarge`, `InvalidDeadline`, `IssueAlreadyFunded`, `BountyNotFound`, `InvalidStatus`, `DeadlineNotReached`, `SelfPayout`, `InvalidSplit`, `InvalidFee`, `Overflow`, and `RelayerNotAllowed`.
 
 ---
 
@@ -410,12 +417,14 @@ falling back to per IP.
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/health` | — | db, RPC, Redis, indexer lag (503 when unhealthy) |
+| `GET` | `/config` | — | live escrow fee, duration settings, and allowed token metadata/limits |
+| `GET` | `/filters` | — | available bounty statuses, tokens, and repositories |
 | `GET` | `/auth/login`, `/auth/callback` | — | GitHub OAuth (PKCE) |
 | `GET` | `/auth/me` | session | profile + CSRF token |
 | `POST` | `/auth/logout` | session + CSRF | |
 | `POST` | `/wallet/challenge`, `/wallet/verify` | session + CSRF | SEP-53 wallet linking |
 | `DELETE` | `/wallet` | session + CSRF | unlink |
-| `GET` | `/bounties` | — | list; filter by status, token, min amount, query; sort; cursor paging |
+| `GET` | `/bounties` | — | list; filter by status, token, repository, min amount, query; sort; cursor paging |
 | `GET` | `/bounties/:id` | — | detail with PRs, reviews, payouts |
 | `GET` | `/intents/:id` | — | funding link state |
 | `POST` | `/intents/:id/build` | session + CSRF | unsigned `fund_bounty` XDR |

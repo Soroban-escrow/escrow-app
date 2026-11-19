@@ -1,6 +1,10 @@
 export const metadata = { title: 'How it works · SkillEscrow' };
 
-export default function Docs() {
+import { apiGet } from '@/lib/api';
+
+export default async function Docs() {
+  const config = await apiGet<{ feeBps: number | null }>('/config');
+  const fee = config?.feeBps;
   return (
     <>
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Docs</p>
@@ -29,7 +33,7 @@ export default function Docs() {
 
       <h2>Fees and trust</h2>
       <div className="two">
-        <p>The fee is <strong>3%</strong> of the payout, charged to the maintainer. Refunds are free.</p>
+        <p>The fee is {fee === null || fee === undefined ? 'configured by the escrow contract' : <><strong>{fee / 100}%</strong> of the payout</>}, charged to the maintainer. Refunds are free.</p>
         <p>Funds sit in a Soroban contract on Stellar. A relayer may release a bounty only if its maintainer opted in. The AI review never moves money, and disputes go to a human arbiter.</p>
       </div>
     </>

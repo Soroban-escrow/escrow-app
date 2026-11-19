@@ -1,4 +1,4 @@
-import { Client, type Bounty } from '@skillescrow/contract-client';
+import { Client, type Bounty, type Config, type TokenLimits } from '@skillescrow/contract-client';
 import { rpc, TransactionBuilder, Transaction } from '@stellar/stellar-sdk';
 
 export interface ChainConfig {
@@ -20,6 +20,17 @@ export function createChain(cfg: ChainConfig) {
       const r = tx.result;
       if (r.isErr()) throw new Error(`get_bounty failed: ${JSON.stringify(r.unwrapErr())}`);
       return r.unwrap();
+    },
+
+    async getConfig(): Promise<Config> {
+      const tx = await client().get_config();
+      if (tx.result.isErr()) throw new Error(`get_config failed: ${JSON.stringify(tx.result.unwrapErr())}`);
+      return tx.result.unwrap();
+    },
+
+    async getTokenLimits(token: string): Promise<TokenLimits | null> {
+      const tx = await client().get_token({ token });
+      return tx.result ?? null;
     },
 
     async activeBounty(repoId: bigint, issue: bigint): Promise<bigint | undefined> {

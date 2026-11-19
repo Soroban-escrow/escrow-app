@@ -14,7 +14,11 @@ export interface ApiDeps {
   /** called after a wallet is linked (continues pending payouts) */
   onWalletLinked?: (githubId: bigint) => Promise<unknown>;
   /** enables the funding, release and refund routes */
-  chain?: FundingChain & AdminChain;
+  chain?: FundingChain & AdminChain & {
+    getConfig?: () => Promise<{ fee_bps: number; grace_secs: bigint; min_duration_secs: bigint; max_duration_secs: bigint }>;
+    getTokenLimits?: (token: string) => Promise<{ min_amount: bigint; max_amount: bigint } | null>;
+  };
+  tokens?: Array<{ address: string; symbol: string; decimals: number }>;
   /** enables GitHub sign-in (/auth/login, /auth/callback) */
   login?: LoginDeps;
 }
@@ -106,9 +110,31 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
   }
 
   // ---- public reads ----
+  app.get('/config', async (_req, reply) => {
+    try {
+      const config = await d.chain?.getConfig?.();
+      const tokens = await Promise.all((d.tokens ?? []).map(async (token) => {
+        const limits = await d.chain?.getTokenLimits?.(token.address);
+        return { ...token, minAmount: limits?.min_amount.toString() ?? null, maxAmount: limits?.max_amount.toString() ?? null };
+      }));
+      return ser({ feeBps: config?.fee_bps ?? null, graceSecs: config?.grace_secs ?? null, minDurationSecs: config?.min_duration_secs ?? null, maxDurationSecs: config?.max_duration_secs ?? null, tokens });
+    } catch {
+      return err(reply, 503, 'config_unavailable', 'escrow configuration is temporarily unavailable');
+    }
+  });
+
+  app.get('/filters', async () => {
+    const [repos, tokens] = await Promise.all([
+      d.db.repo.findMany({ where: { bounties: { some: {} } }, select: { fullName: true }, orderBy: { fullName: 'asc' } }),
+      d.db.bounty.findMany({ distinct: ['token'], select: { token: true }, orderBy: { token: 'asc' } }),
+    ]);
+    return { statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: tokens.map((x) => x.token), repositories: repos.map((x) => x.fullName) };
+  });
+
   const listQuery = z.object({
-    status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED']).optional(),
+    status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED', 'ALL']).optional(),
     token: z.string().optional(),
+    repo: z.string().max(200).optional(),
     minAmount: z.string().regex(/^\d+$/).optional(),
     q: z.string().max(100).optional(),
     sort: z.enum(['newest', 'highest', 'ending']).default('newest'),
@@ -121,8 +147,9 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     const f = p.data;
     const rows = await d.db.bounty.findMany({
       where: {
-        status: f.status ?? 'OPEN',
+        ...(f.status && f.status !== 'ALL' ? { status: f.status } : f.status === 'ALL' ? {} : { status: 'OPEN' }),
         ...(f.token ? { token: f.token } : {}),
+        ...(f.repo ? { repo: { fullName: f.repo } } : {}),
         ...(f.minAmount ? { amount: { gte: f.minAmount } } : {}),
         ...(f.q ? { OR: [{ issueTitle: { contains: f.q, mode: 'insensitive' as const } }, { repo: { fullName: { contains: f.q, mode: 'insensitive' as const } } }] } : {}),
       },

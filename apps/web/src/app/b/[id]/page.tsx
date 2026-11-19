@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { apiGet, daysLeft, explorerTx, money } from '@/lib/api';
+import { apiGet, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
 
 interface Review { verdict: string; score: number; flags: string[] }
 interface Detail {
@@ -33,7 +33,10 @@ function progress(b: Detail): number {
 
 export default async function Bounty({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const b = await apiGet<Detail>(`/bounties/${encodeURIComponent(id)}`);
+  const [b, config] = await Promise.all([
+    apiGet<Detail>(`/bounties/${encodeURIComponent(id)}`),
+    apiGet<{ tokens: TokenInfo[] }>('/config'),
+  ]);
   if (!b) notFound();
   const prs = [...b.prs].sort((x, y) => {
     const rx = x.reviews[0], ry = y.reviews[0];
@@ -48,7 +51,7 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
       <h1 className="title">{b.issueTitle || `Issue #${b.issueNumber}`}</h1>
 
       <div className="hero-amount">
-        <span className={`big${b.status === 'OPEN' ? ' locked' : ''}`}>{money(b.amount, b.token)}</span>
+        <span className={`big${b.status === 'OPEN' ? ' locked' : ''}`} title={config?.tokens.some((t) => t.address === b.token) ? undefined : `Unknown token ${b.token}`}>{money(b.amount, b.token, config?.tokens)}</span>
         <span className={`status ${b.status.toLowerCase()}`}>{b.status === 'RELEASED' ? 'Paid' : b.status.toLowerCase()}</span>
       </div>
 

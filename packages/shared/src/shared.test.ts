@@ -13,6 +13,12 @@ describe('amounts', () => {
   it('rejects bad input', () => {
     for (const s of ['', '-1', '1e3', '1.00000001', 'abc', '1.', '.5']) expect(() => toBaseUnits(s)).toThrow();
   });
+  it('parses large and fractional user values without floating point rounding', () => {
+    expect(toBaseUnits('0.1')).toBe(1_000_000n);
+    expect(toBaseUnits('123456789.1234567')).toBe(1_234_567_891_234_567n);
+    expect(() => toBaseUnits('1e3')).toThrow();
+    expect(() => toBaseUnits('.5')).toThrow();
+  });
   it('round-trips', () => {
     for (const v of [0n, 1n, 9999999n, 10000000n, 123456789012345n]) expect(toBaseUnits(fromBaseUnits(v))).toBe(v);
   });

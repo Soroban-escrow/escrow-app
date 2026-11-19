@@ -1,8 +1,8 @@
 'use client';
 import { use, useCallback, useEffect, useState } from 'react';
-import { fromBaseUnits } from '@skillescrow/shared/src/amounts';
 import { errorText } from '@/lib/errors';
 import { connect, signTx, WalletUxError } from '@/lib/freighter';
+import { money, type TokenInfo } from '@/lib/api';
 
 interface Intent { state: 'open' | 'expired' | 'used'; repo: string | null; issueNumber: number; token: string; amount: string; durationDays: number; bountyId: string | null }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
@@ -14,13 +14,18 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
   const [auto, setAuto] = useState(true);
   const [step, setStep] = useState<'idle' | 'signing' | 'waiting'>('idle');
   const [err, setErr] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/intents/${encodeURIComponent(intentId)}`);
     setIntent(r.ok ? ((await r.json()) as Intent) : null);
   }, [intentId]);
 
-  useEffect(() => { void load(); fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then((m) => setCsrf(m?.csrfToken ?? null), () => setCsrf(null)); }, [load]);
+  useEffect(() => {
+    void load();
+    fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then((m) => setCsrf(m?.csrfToken ?? null), () => setCsrf(null));
+    fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
+  }, [load]);
 
   // after submitting, wait for the indexer to mark the intent used, then go to the bounty
   useEffect(() => {
@@ -56,13 +61,13 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
 
   if (intent === undefined) return <p className="muted">Loading…</p>;
   if (intent === null) return <><h1>Funding link not found</h1><p className="muted">Check the link, or comment <code>/bounty</code> on the issue again.</p></>;
-  const amount = fromBaseUnits(BigInt(intent.amount), 7, 2);
+  const amount = money(intent.amount, intent.token, tokens);
   return (
     <>
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>{intent.repo ?? 'repository'} #{intent.issueNumber}</p>
       <h1>Fund bounty</h1>
       <section className="panel">
-      <p className="big locked" style={{ display: 'inline-block', margin: 0 }}>{amount}</p>
+      <p className="big locked" style={{ display: 'inline-block', margin: 0 }} title={tokens.some((t) => t.address === intent.token) ? undefined : `Unknown token ${intent.token}`}>{amount}</p>
       <p className="muted">Held in escrow for {intent.durationDays} days, then refundable if nothing is merged.</p>
       {intent.state === 'expired' && <p className="error" role="alert">{errorText('intent_expired', 'Expired.')}</p>}
       {intent.state === 'used' && <p className="ok">{errorText('intent_used', 'Funded.')} {intent.bountyId && <a href={`/b/${intent.bountyId}`}>View the bounty</a>}</p>}

@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { fromBaseUnits } from '@skillescrow/shared/src/amounts';
 import { errorText } from '@/lib/errors';
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/freighter';
+import { money, type TokenInfo } from '@/lib/api';
 
-interface Funded { id: string; issueTitle: string; amount: string; status: string; deadline: string }
+interface Funded { id: string; issueTitle: string; amount: string; token: string; status: string; deadline: string }
 interface Me { login: string; wallet: string | null; csrfToken: string }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
 
@@ -13,10 +13,12 @@ export default function Account() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
 
   useEffect(() => {
     fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then(setMe, () => setMe(null));
     fetch('/api/me/funded').then((r) => (r.ok ? r.json() : [])).then(setFunded, () => setFunded([]));
+    fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
   }, []);
 
   /** Maintainer actions: the API builds the transaction, Freighter signs it, the API relays it. */
@@ -78,7 +80,7 @@ export default function Account() {
       {funded.length === 0 ? <p className="muted">Nothing funded from this wallet yet.</p> : funded.map((f) => (
         <div key={f.id} className="card">
           <div className="row"><a href={`/b/${f.id}`}>{f.issueTitle || `Bounty ${f.id}`}</a><span className="badge">{f.status}</span></div>
-          <div className="row muted"><span className="amount">{fromBaseUnits(BigInt(f.amount), 7, 2)}</span>
+          <div className="row muted"><span className="amount">{money(f.amount, f.token, tokens)}</span>
             {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
         </div>
       ))}

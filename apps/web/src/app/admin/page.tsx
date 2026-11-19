@@ -1,10 +1,10 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { fromBaseUnits } from '@skillescrow/shared/src/amounts';
 import { errorText } from '@/lib/errors';
 import { connect, signTx, WalletUxError } from '@/lib/freighter';
+import { money, type TokenInfo } from '@/lib/api';
 
-interface Dispute { id: string; status: string; reason: string; createdAt: string; overdue: boolean; resolutionNote: string | null; bounty: { id: string; issueTitle: string; amount: string; maintainer: string; repo: { fullName: string }; prs: { number: number; authorLogin: string; reviews: { verdict: string; score: number }[] }[] } }
+interface Dispute { id: string; status: string; reason: string; createdAt: string; overdue: boolean; resolutionNote: string | null; bounty: { id: string; issueTitle: string; amount: string; token: string; maintainer: string; repo: { fullName: string }; prs: { number: number; authorLogin: string; reviews: { verdict: string; score: number }[] }[] } }
 interface Payout { id: string; bountyId: string; prNumber: number; lastError: string | null; txHash: string | null }
 interface Status { indexerLedger: number | null; failedPayouts: number; waitingPayouts: number; openDisputes: number }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
@@ -14,13 +14,15 @@ export default function Admin() {
   const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [form, setForm] = useState<Record<string, { winner: string; bps: string; note: string }>>({});
 
   const load = useCallback(async () => {
     const j = (u: string) => fetch(`/api${u}`).then((r) => (r.ok ? r.json() : null));
-    const [d, p, s] = await Promise.all([j('/admin/disputes'), j('/admin/payouts?status=FAILED'), j('/admin/status')]);
+    const [d, p, s, config] = await Promise.all([j('/admin/disputes'), j('/admin/payouts?status=FAILED'), j('/admin/status'), j('/config')]);
     setDisputes(d ?? []); setPayouts(p ?? []); setStatus(s);
+    setTokens(config?.tokens ?? []);
   }, []);
   useEffect(() => { fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then((m) => { setMe(m); if (m?.isAdmin) void load(); }, () => setMe(null)); }, [load]);
 
@@ -76,7 +78,7 @@ export default function Admin() {
       {disputes.length === 0 ? <p className="muted">No open disputes.</p> : disputes.map((d) => (
         <div key={d.id} className="card" style={d.overdue ? { borderColor: 'var(--warn)' } : undefined}>
           <div className="row"><strong>{d.bounty.repo.fullName} · {d.bounty.issueTitle || `Bounty ${d.bounty.id}`}</strong><span className="badge">{d.status}{d.overdue ? ' · over 36 h' : ''}</span></div>
-          <p className="muted">{fromBaseUnits(BigInt(d.bounty.amount), 7, 2)} · maintainer <code>{d.bounty.maintainer}</code></p>
+          <p className="muted">{money(d.bounty.amount, d.bounty.token, tokens)} · maintainer <code>{d.bounty.maintainer}</code></p>
           <p>Reason: {d.reason}</p>
           <p className="muted">PRs: {d.bounty.prs.map((p) => `#${p.number} ${p.authorLogin}${p.reviews[0] ? ` (AI: ${p.reviews[0].verdict} ${p.reviews[0].score})` : ''}`).join(', ') || 'none'}</p>
           {d.status === 'requested' && <p><button onClick={() => openOnChain(d)}>Open on chain</button></p>}

@@ -18,6 +18,10 @@ export default async function setup() {
   await bounty(1, 100, 7, 'Retry failed HTTP requests', '500000000', 5, ['Retries 3 times', 'Adds a unit test']);
   await bounty(2, 100, 8, 'Add dark mode', '1200000000', 20, []);
   await bounty(3, 101, 9, 'Fix flaky CI', '250000000', 2, ['CI is green 10 runs in a row']);
+  await db.query(`INSERT INTO "Bounty"(id,"repoId","issueNumber","issueTitle","issueUrl",criteria,maintainer,token,amount,"feeBps",deadline,"relayerAllowed",status,"fundTx","createdAt","updatedAt")
+    VALUES (4,100,10,'Paid bounty','https://github.com/acme/widgets/issues/10','{}','GMAINT','COTHER',100000000,300,now()+interval '4 days',true,'RELEASED','tx',now(),now()),
+    (5,101,11,'Refunded bounty','https://github.com/acme/gadgets/issues/11','{}','GMAINT','CUSDCE2E',100000000,300,now()+interval '4 days',true,'REFUNDED','tx',now(),now()),
+    (6,100,12,'Disputed bounty','https://github.com/acme/widgets/issues/12','{}','GMAINT','CUSDCE2E',100000000,300,now()+interval '4 days',true,'DISPUTED','tx',now(),now())`);
   await db.query(`INSERT INTO "PullRequest"(id,number,"authorGithubId","authorLogin","headSha",state) VALUES (500,3,77,'contrib','abc','open'),(501,4,78,'second','def','open')`);
   await db.query(`INSERT INTO "PullRequestBounty"("prId","bountyId") VALUES (500,1),(501,1),(500,2)`); // PR 500 closes two bounties
   await db.query(`INSERT INTO "AiReview"(id,"prId","headSha",model,verdict,score,result,flags,"inputTokens","outputTokens") VALUES ('r1',500,'abc','m','likely_meets',88,'{}','{}',1,1),('r2',501,'def','m','partially_meets',55,'{}','{}',1,1)`);
