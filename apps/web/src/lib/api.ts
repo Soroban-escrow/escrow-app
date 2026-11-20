@@ -84,3 +84,9 @@ export function totals(items: { amount: string; token: string }[], tokens: Token
 }
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+export function formatAddress(address: string, startChars = 8, endChars = 4): { display: string; full: string } {
+  if (address.length <= startChars + endChars + 3) return { display: address, full: address };
+  return { display: `${address.slice(0, startChars)}…${address.slice(-endChars)}`, full: address };
+}
+

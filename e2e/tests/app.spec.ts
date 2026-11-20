@@ -334,3 +334,104 @@ test.describe('scripted Freighter signed flows', () => {
     await expect(page.getByRole('status')).toContainText('a winner address is required when winnerBps > 0'); expect(built).toBe(false);
   });
 });
+
+test.describe('public profile page', () => {
+  test('shows paid bounties with tokens and explorer links', async ({ page }) => {
+    await page.goto('/u/paiduser');
+    await expect(page.getByRole('heading', { name: 'paiduser' })).toBeVisible();
+    await expect(page.getByText('Paid bounty')).toBeVisible();
+    await expect(page.getByText('10.00 COTHER')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'tx' })).toBeVisible();
+    await noSideScroll(page);
+  });
+
+  test('shows user with payouts in two different tokens', async ({ page }) => {
+    await page.goto('/u/multitoken');
+    await expect(page.getByRole('heading', { name: 'multitoken' })).toBeVisible();
+    await expect(page.getByText('Refunded bounty')).toBeVisible();
+    await expect(page.getByText('Disputed bounty')).toBeVisible();
+    await expect(page.getByText('12.00 USDC')).toBeVisible();
+    await expect(page.getByText('3.00 USDC')).toBeVisible();
+  });
+
+  test('shows empty state for user with no payments', async ({ page }) => {
+    await page.goto('/u/nopayments');
+    await expect(page.getByRole('heading', { name: 'nopayments' })).toBeVisible();
+    await expect(page.getByText('None yet.')).toBeVisible();
+  });
+
+  test('returns 404 for missing login', async ({ page }) => {
+    expect((await page.goto('/u/doesnotexist999'))?.status()).toBe(404);
+  });
+
+  test('mixed-case login normalizes to lowercase', async ({ page }) => {
+    await page.goto('/u/PaIdUsEr');
+    await expect(page.getByRole('heading', { name: 'paiduser' })).toBeVisible();
+    await expect(page.getByText('Paid bounty')).toBeVisible();
+  });
+});
+
+test.describe('bounty page status variations', () => {
+  test('OPEN status shows badge and stepper', async ({ page }) => {
+    await page.goto('/b/1');
+    await expect(page.locator('.status.open')).toBeVisible();
+    await expect(page.locator('.steps li.now')).toHaveText('In review');
+  });
+
+  test('RELEASED status shows paid badge and completed stepper', async ({ page }) => {
+    await page.goto('/b/4');
+    await expect(page.locator('.status.released')).toContainText('Paid');
+    await expect(page.locator('.steps li.done').last()).toHaveText('Paid');
+    await expect(page.getByText('PR #3: Paid')).toBeVisible();
+  });
+
+  test('REFUNDED status shows notice and badge', async ({ page }) => {
+    await page.goto('/b/5');
+    await expect(page.locator('.status.refunded')).toBeVisible();
+    await expect(page.getByText('Nothing was merged in time')).toBeVisible();
+  });
+
+  test('DISPUTED status shows notice and badge', async ({ page }) => {
+    await page.goto('/b/6');
+    await expect(page.locator('.status.disputed')).toBeVisible();
+    await expect(page.getByText('This bounty is under dispute')).toBeVisible();
+  });
+
+  test('RESOLVED status shows notice and badge', async ({ page }) => {
+    await page.goto('/b/7');
+    await expect(page.locator('.status.resolved')).toBeVisible();
+    await expect(page.getByText('An arbiter resolved a dispute')).toBeVisible();
+  });
+});
+
+test.describe('admin access control', () => {
+  test('non-admin sees refusal on admin page', async ({ page }) => {
+    await signIn(page, 'user');
+    await page.goto('/admin');
+    await expect(page.locator('p[role="alert"]')).toContainText('Admins only');
+  });
+
+  test('non-admin gets 403 from admin API endpoints', async ({ page }) => {
+    await signIn(page, 'user');
+    const response = await page.request.get('http://localhost:3100/api/admin/status');
+    expect(response.status()).toBe(403);
+  });
+
+  test('anonymous visitor redirected to sign in', async ({ page }) => {
+    await page.goto('/admin');
+    await expect(page.locator('p[role="alert"]')).toContainText('Admins only');
+  });
+});
+
+test.describe('address truncation on small screens', () => {
+  test('long addresses do not cause horizontal scroll at 320px', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await signIn(page, 'user');
+    await page.goto('/me');
+    await page.route('**/api/auth/me', (r) => r.fulfill({ json: fakeMe({ wallet: 'GVERYLONGADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }) }));
+    await page.route('**/api/me/funded', (r) => r.fulfill({ json: [] }));
+    await page.reload();
+    await expect(page.locator('code[data-address]')).toBeVisible();
+    await noSideScroll(page);
+  });
+});

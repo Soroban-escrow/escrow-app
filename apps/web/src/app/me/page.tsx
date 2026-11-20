@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
  feat/bounty-filters-api-config-wallet-e2e-contract-errors
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/freighter';
-import { money, type TokenInfo } from '@/lib/api';
+import { money, formatAddress, type TokenInfo } from '@/lib/api';
 
-import { refundWindow, explorerTx } from '@/lib/api';
+import { refundWindow, explorerTx, formatAddress } from '@/lib/api';
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
  fresh-build
 
@@ -84,7 +84,7 @@ export default function Account() {
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
       <h1>{me.login}</h1>
       <h2>Wallet</h2>
-      {me.wallet ? <p>Linked: <code>{me.wallet}</code></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
+      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
       <button onClick={link} disabled={busy}>{busy ? 'Waiting for Freighter…' : me.wallet ? 'Change wallet' : 'Link wallet'}</button>
       {msg && <p role="status" className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
       <h2>Funded bounties</h2>

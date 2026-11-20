@@ -64,6 +64,33 @@ h2 { font-family: var(--sans); font-size: 0.75rem; font-weight: 600; letter-spac
 p { margin: 0.6rem 0; }
 code, .mono { font-family: var(--mono); font-size: 0.86em; font-variant-numeric: tabular-nums; }
 code { background: var(--paper-2); padding: 0.1em 0.35em; border-radius: 5px; overflow-wrap: anywhere; }
+code[data-address], code[data-hash] {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 480px) {
+  code[data-address]::before,
+  code[data-hash]::before {
+    content: attr(data-address) attr(data-hash);
+    display: inline;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: ltr;
+    unicode-bidi: plaintext;
+  }
+  code[data-address]::after,
+  code[data-hash]::after {
+    content: '';
+  }
+  code[data-address],
+  code[data-hash] {
+    text-indent: -999em;
+    max-width: 12ch;
+  }
+}
 
 /* ---------- header / footer ---------- */
 .bar {
