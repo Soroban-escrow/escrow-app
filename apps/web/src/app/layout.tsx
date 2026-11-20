@@ -11,6 +11,14 @@ const serif = Instrument_Serif({ subsets: ['latin'], weight: '400', style: ['nor
 export const metadata: Metadata = {
   title: 'SkillEscrow Bounties',
   description: 'Paid GitHub issues, settled in USDC on Stellar. The pull request you merge gets paid from escrow.',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_WEB_URL ?? 'http://localhost:3000'),
+  openGraph: {
+    type: 'website',
+    siteName: 'SkillEscrow Bounties',
+    title: 'SkillEscrow Bounties',
+    description: 'Paid GitHub issues, settled on Stellar.',
+  },
+  twitter: { card: 'summary_large_image', title: 'SkillEscrow Bounties', description: 'Paid GitHub issues, settled on Stellar.' },
 };
 export const viewport: Viewport = {
   themeColor: [{ media: '(prefers-color-scheme: light)', color: '#f6f5f1' }, { media: '(prefers-color-scheme: dark)', color: '#0e0e0d' }],

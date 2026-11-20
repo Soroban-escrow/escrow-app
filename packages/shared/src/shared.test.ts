@@ -37,6 +37,22 @@ describe('fees (same vectors as the contract)', () => {
     expect(fee(i128max / 10_000n, 10_000)).toBe(i128max / 10_000n);
     expect(() => fee(i128max, 10_000)).toThrow();
   });
+
+  it('preserves the contract fee invariants across generated values', () => {
+    let seed = 0x51_7a_11;
+    const next = (max: number) => {
+      seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+      return seed % max;
+    };
+    for (let i = 0; i < 500; i += 1) {
+      const amount = BigInt(next(1_000_000_000));
+      const bps = next(10_001);
+      expect(fee(amount, bps)).toBe((amount * BigInt(bps)) / 10_000n);
+      expect(net(amount, bps) + fee(amount, bps)).toBe(amount);
+      expect(fee(amount, bps)).toBeLessThanOrEqual(amount);
+      expect(portion(amount, bps)).toBe(fee(amount, bps));
+    }
+  });
 });
 
 describe('status', () => {

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import pg from 'pg';
 import { E2E_DB } from '../playwright.config.js';
 import { FAKE_ADDRESS, installFakeWallet, mockConfig, TEST_PASSPHRASE } from '../fake-wallet.js';
@@ -9,6 +10,17 @@ const signIn = (page: Page, who: 'user' | 'admin') =>
   page.context().addCookies([{ name: 'se_session', value: sessions()[who], url: 'http://localhost:3100' }]);
 const noSideScroll = async (page: Page) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+test.describe('accessibility gate', () => {
+  for (const path of ['/me', '/fund/intent-open-0000001', '/admin']) {
+    test(`${path} has no critical axe violations`, async ({ page }) => {
+      await page.goto(path);
+      const results = await new AxeBuilder({ page }).analyze();
+      const critical = results.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious');
+      expect(critical, critical.map((v) => `${v.id}: ${v.help}`).join('\n')).toEqual([]);
+    });
+  }
+});
 
 test.describe('public pages', () => {
   test('home lists open bounties, newest first, with amounts and PR counts', async ({ page }) => {
