@@ -1,11 +1,19 @@
 import { Client, type Bounty, type Config, type TokenLimits } from '@skillescrow/contract-client';
-import { rpc, TransactionBuilder, Transaction } from '@stellar/stellar-sdk';
+import { Address, rpc, TransactionBuilder, Transaction, xdr } from '@stellar/stellar-sdk';
 
 export interface ChainConfig {
   rpcUrl: string;
   networkPassphrase: string;
   contractId: string;
 }
+
+const ALLOWED_RELAY_FUNCTIONS = new Set([
+  'fund_bounty',
+  'release',
+  'refund',
+  'open_dispute',
+  'resolve',
+]);
 
 export function createChain(cfg: ChainConfig) {
   const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith('http://') });
@@ -52,7 +60,6 @@ export function createChain(cfg: ChainConfig) {
       return tx.toXDR();
     },
 
-
     /** Unsigned release(maintainer, id, winner) for maintainers who did not opt in to the relayer. */
     async buildReleaseTx(maintainer: string, bountyId: bigint, winner: string): Promise<string> {
       const tx = await client(maintainer).release({ caller: maintainer, bounty_id: bountyId, winner });
@@ -67,7 +74,6 @@ export function createChain(cfg: ChainConfig) {
       if (sim && rpc.Api.isSimulationError(sim)) throw new Error(`simulation failed: ${sim.error}`);
       return tx.toXDR();
     },
-
 
     /** Arbiter-signed open_dispute; the arbiter key never touches the server. */
     async buildOpenDisputeTx(arbiter: string, bountyId: bigint): Promise<string> {
@@ -85,12 +91,30 @@ export function createChain(cfg: ChainConfig) {
     },
 
     /** Relays a signed transaction. Only single-operation calls to our contract are accepted. */
-    async submitSigned(xdr: string, expectedSource?: string): Promise<string> {
-      const tx = TransactionBuilder.fromXDR(xdr, cfg.networkPassphrase);
+    async submitSigned(xdrString: string, expectedSource?: string): Promise<string> {
+      const tx = TransactionBuilder.fromXDR(xdrString, cfg.networkPassphrase);
       if (!(tx instanceof Transaction) || tx.operations.length !== 1) throw new Error('expected a single-operation transaction');
       const op = tx.operations[0]!;
       if (op.type !== 'invokeHostFunction') throw new Error('not a contract call');
       if (expectedSource && tx.source !== expectedSource) throw new Error('unexpected source account');
+
+      let call: xdr.InvokeContractArgs;
+      try {
+        call = op.func.invokeContract();
+      } catch {
+        throw new Error('not a contract invocation');
+      }
+
+      const contractAddress = Address.fromScAddress(call.contractAddress()).toString();
+      if (contractAddress !== cfg.contractId) {
+        throw new Error(`transaction calls a foreign contract: ${contractAddress}`);
+      }
+
+      const fn = call.functionName().toString();
+      if (!ALLOWED_RELAY_FUNCTIONS.has(fn)) {
+        throw new Error(`disallowed contract function: ${fn}`);
+      }
+
       const r = await server.sendTransaction(tx);
       if (r.status === 'ERROR') throw new Error(`submit failed: ${r.status}`);
       return r.hash;
