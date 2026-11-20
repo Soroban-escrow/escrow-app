@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "@anthropic-ai/sdk"
+      - dependency-name: "@stellar/stellar-sdk"
+      - dependency-name: "@prisma/client"
+      - dependency-name: "@prisma/adapter-pg"
+      - dependency-name: "prisma"
+      - dependency-name: "pg"
+      - dependency-name: "typescript"
+      - dependency-name: "vitest"
+      - dependency-name: "pnpm"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
