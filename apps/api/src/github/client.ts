@@ -117,6 +117,17 @@ export function createGithubClient(cfg: GithubClientConfig) {
       await json(installation, 'POST', `/repos/${repo}/issues/${issue}/labels`, { labels: [label] });
     },
 
+    /** Removes all "bounty:" labels from the issue. */
+    async clearBountyLabel(installation: bigint, repo: string, issue: number): Promise<void> {
+      repoOk(repo); positive(issue, 'issue');
+      const existing = await json<{ name: string }[]>(installation, 'GET', `/repos/${repo}/issues/${issue}/labels?per_page=100`);
+      for (const l of existing) {
+        if (l.name.startsWith('bounty:')) {
+          await call(installation, 'DELETE', `/repos/${repo}/issues/${issue}/labels/${encodeURIComponent(l.name)}`);
+        }
+      }
+    },
+
     /** Changed files with patches (paginated, capped at 300 files). */
     async getPullFiles(installation: bigint, repo: string, pr: number): Promise<PullFile[]> {
       repoOk(repo); positive(pr, 'pull request');

@@ -91,6 +91,17 @@ describe('calls', () => {
     expect(g.calls.some((x) => x.method === 'DELETE' && x.path.endsWith('bounty%3A%2010%20USDC'))).toBe(true);
     expect(g.calls.at(-1)!.body).toEqual({ labels: ['bounty: 50 USDC'] });
   });
+  it('clears bounty labels: deletes matching bounty labels and leaves non-bounty labels', async () => {
+    const g = fakeGithub();
+    g.routes['GET /repos/o/r/issues/7/labels'] = () => ({ status: 200, json: [{ name: 'bounty: 10 USDC' }, { name: 'bounty: 50 USDC' }, { name: 'bug' }] });
+    g.routes['DELETE /repos/o/r/issues/7/labels/bounty%3A%2010%20USDC'] = () => ({ status: 200, json: [] });
+    g.routes['DELETE /repos/o/r/issues/7/labels/bounty%3A%2050%20USDC'] = () => ({ status: 200, json: [] });
+    await make(g).clearBountyLabel(9n, 'o/r', 7);
+    const deletes = g.calls.filter((x) => x.method === 'DELETE');
+    expect(deletes).toHaveLength(2);
+    expect(deletes[0]!.path).toBe('/repos/o/r/issues/7/labels/bounty%3A%2010%20USDC');
+    expect(deletes[1]!.path).toBe('/repos/o/r/issues/7/labels/bounty%3A%2050%20USDC');
+  });
   it('reads PR files across pages and summarises CI', async () => {
     const g = fakeGithub();
     const page = (n: number) => Array.from({ length: n }, (_, i) => ({ filename: `f${i}`, additions: 1, deletions: 0, patch: '+x' }));
@@ -113,6 +124,8 @@ describe('input validation (no request is made)', () => {
     await expect(c.postComment(9n, 'o/r?x=1', 1, 'x')).rejects.toThrow(/repository/);
     await expect(c.getCiConclusion(9n, 'o/r', 'abc/../x')).rejects.toThrow(/sha/);
     await expect(c.setBountyLabel(9n, 'o/r', 1, 'evil; label')).rejects.toThrow(/label/);
+    await expect(c.clearBountyLabel(9n, 'o/r/../../x', 1)).rejects.toThrow(/repository/);
+    await expect(c.clearBountyLabel(9n, 'o/r', -1)).rejects.toThrow(/issue/);
     expect(g.calls).toHaveLength(0);
   });
 });

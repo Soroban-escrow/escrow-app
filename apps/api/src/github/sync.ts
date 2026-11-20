@@ -11,6 +11,7 @@ export interface GithubApi {
   postComment(installation: bigint, repo: string, issue: number, body: string): Promise<bigint>;
   updateComment(installation: bigint, repo: string, commentId: bigint, body: string): Promise<void>;
   setBountyLabel(installation: bigint, repo: string, issue: number, label: string): Promise<void>;
+  clearBountyLabel(installation: bigint, repo: string, issue: number): Promise<void>;
 }
 
 export interface SyncDeps {
@@ -65,6 +66,7 @@ export async function refreshBountyCard(d: SyncDeps, bountyId: bigint): Promise<
     return 'posted' as const;
   }, { timeout: 20_000 });
   if (STATUS_LABEL[b.status]) await d.gh.setBountyLabel(installation, repo, b.issueNumber, labelFor(BigInt(b.amount.toString()), symbol));
+  else await d.gh.clearBountyLabel(installation, repo, b.issueNumber);
   return outcome;
 }
 
