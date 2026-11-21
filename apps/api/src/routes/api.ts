@@ -7,12 +7,15 @@ import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
 import { registerAdmin, type AdminChain } from './admin.js';
 import { registerFunding, type FundingChain } from './funding.js';
+import { scheduleWalletFollowUp, type RetryOptions } from './wallet-followup.js';
 
 export interface ApiDeps {
   db: Db;
   csrfSecret: string;
   /** called after a wallet is linked (continues pending payouts) */
   onWalletLinked?: (githubId: bigint) => Promise<unknown>;
+  /** retry policy for the background payout follow-up after a wallet link */
+  walletFollowUpRetry?: RetryOptions;
   /** enables the funding, release and refund routes */
   chain?: FundingChain & AdminChain & {
     getConfig?: () => Promise<{ fee_bps: number; grace_secs: bigint; min_duration_secs: bigint; max_duration_secs: bigint }>;
@@ -90,14 +93,21 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     const body = verifyBody.safeParse(req.body);
     if (!body.success) return err(reply, 400, 'bad_request', 'challengeId and signature required');
     const u = (req as Authed).user!;
+    let result: Awaited<ReturnType<typeof verifyChallenge>>;
     try {
-      const r = await verifyChallenge({ db: d.db }, u.id, body.data.challengeId, body.data.signature);
-      await d.onWalletLinked?.(u.githubId);
-      return r;
+      result = await verifyChallenge({ db: d.db }, u.id, body.data.challengeId, body.data.signature);
     } catch (e) {
       if (e instanceof WalletError) return err(reply, e.status, e.code, e.message);
       throw e;
     }
+    if (d.onWalletLinked) {
+      const onWalletLinked = d.onWalletLinked;
+      scheduleWalletFollowUp(() => onWalletLinked(u.githubId), {
+        ...d.walletFollowUpRetry,
+        log: (message, extra) => app.log.error({ extra }, message),
+      });
+    }
+    return result;
   });
   app.delete('/wallet', authed(true), async (req) => {
     await unlinkWallet({ db: d.db }, (req as Authed).user!.id);

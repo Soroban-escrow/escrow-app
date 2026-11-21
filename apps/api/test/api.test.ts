@@ -4,6 +4,7 @@ import { sep53Hash } from '../src/auth/wallet.js';
 import { createSession } from '../src/auth/session.js';
 import { loadConfig } from '../src/config.js';
 import { createDb } from '../src/db.js';
+import type { ApiDeps } from '../src/routes/api.js';
 import { buildServer } from '../src/server.js';
 
 const db = createDb(process.env.TEST_DATABASE_URL ?? 'postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test');
@@ -11,8 +12,22 @@ afterAll(() => db.$disconnect());
 const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V', SESSION_SECRET: 's'.repeat(32), CSRF_SECRET: 'c'.repeat(32), GITHUB_WEBHOOK_SECRET: 'hooksecret', LOG_LEVEL: 'silent' });
 
 let linked: bigint[];
-const app = async () =>
-  buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, onWalletLinked: async (g) => void linked.push(g) });
+const app = async (overrides: Partial<ApiDeps> = {}) =>
+  buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+    db,
+    csrfSecret: cfg.CSRF_SECRET,
+    onWalletLinked: async (g) => void linked.push(g),
+    walletFollowUpRetry: { attempts: 2, delayMs: () => 0 },
+    ...overrides,
+  });
+
+const waitFor = async (cond: () => boolean) => {
+  for (let i = 0; i < 100; i++) {
+    if (cond()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('condition not met in time');
+};
 
 async function login(login = 'alice', githubId = 1n) {
   const u = await db.user.create({ data: { githubId, githubLogin: login } });
@@ -76,10 +91,31 @@ describe('wallet over HTTP', () => {
     const v = await a.inject({ method: 'POST', url: '/wallet/verify', headers: h, payload: { challengeId: c.challengeId, signature: sig } });
     expect(v.statusCode).toBe(200);
     expect((await db.user.findUniqueOrThrow({ where: { id: u.id } })).wallet).toBe(kp.publicKey());
+    await waitFor(() => linked.length === 1);
     expect(linked).toEqual([1n]);
     const again = await a.inject({ method: 'POST', url: '/wallet/verify', headers: h, payload: { challengeId: c.challengeId, signature: sig } });
     expect(again.statusCode).toBe(409);
     expect(again.json().error.code).toBe('challenge_used');
+  });
+  it('returns 200 with the linked address when the payout follow-up throws', async () => {
+    const attempted: bigint[] = [];
+    const a = await app({
+      onWalletLinked: async (g) => {
+        attempted.push(g);
+        throw new Error('RPC unavailable');
+      },
+    });
+    const { u, cookie } = await login();
+    const h = { cookie, 'x-csrf-token': await csrf(a, cookie) };
+    const kp = Keypair.random();
+    const c = (await a.inject({ method: 'POST', url: '/wallet/challenge', headers: h, payload: { address: kp.publicKey() } })).json();
+    const sig = kp.sign(sep53Hash(c.message)).toString('base64');
+    const v = await a.inject({ method: 'POST', url: '/wallet/verify', headers: h, payload: { challengeId: c.challengeId, signature: sig } });
+    expect(v.statusCode).toBe(200);
+    expect(v.json().address).toBe(kp.publicKey());
+    expect((await db.user.findUniqueOrThrow({ where: { id: u.id } })).wallet).toBe(kp.publicKey());
+    await waitFor(() => attempted.length > 0);
+    expect(attempted[0]).toBe(1n);
   });
   it('bad input gives the standard error shape', async () => {
     const a = await app();
