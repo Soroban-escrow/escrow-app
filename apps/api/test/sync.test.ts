@@ -12,6 +12,7 @@ const gh: GithubApi = {
   postComment: async (i, r, n, b) => (await new Promise((res) => setTimeout(res, 40)), log.push(`post ${i} ${r}#${n} :: ${b.split('\n')[0]}`), 555n),
   updateComment: async (i, r, id, b) => void log.push(`update ${id} :: ${b.split('\n')[0]}`),
   setBountyLabel: async (_i, _r, n, l) => void log.push(`label #${n} ${l}`),
+  clearBountyLabel: async (_i, _r, n) => void log.push(`clear label #${n}`),
 };
 const deps = () => ({ db, gh, webUrl: 'https://app.test', symbolFor: (t: string) => (t === 'CUSDC' ? 'USDC' : 'XLM') });
 
@@ -37,7 +38,39 @@ describe('refreshBountyCard', () => {
     log.length = 0;
     await db.bounty.update({ where: { id: 1n }, data: { status: 'RELEASED' } });
     expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
-    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ✅ Paid']);
+    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ✅ Paid', 'clear label #7']);
+  });
+  it('clears the bounty label when status is RELEASED', async () => {
+    await refreshBountyCard(deps(), 1n);
+    log.length = 0;
+    await db.bounty.update({ where: { id: 1n }, data: { status: 'RELEASED' } });
+    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
+    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ✅ Paid', 'clear label #7']);
+  });
+  it('clears the bounty label when status is REFUNDED', async () => {
+    await refreshBountyCard(deps(), 1n);
+    log.length = 0;
+    await db.bounty.update({ where: { id: 1n }, data: { status: 'REFUNDED' } });
+    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
+    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ↩️ Refunded', 'clear label #7']);
+  });
+  it('clears the bounty label when status is RESOLVED', async () => {
+    await refreshBountyCard(deps(), 1n);
+    log.length = 0;
+    await db.bounty.update({ where: { id: 1n }, data: { status: 'RESOLVED' } });
+    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
+    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ⚖️ Resolved', 'clear label #7']);
+  });
+  it('sets the bounty label when status is OPEN', async () => {
+    expect(await refreshBountyCard(deps(), 1n)).toBe('posted');
+    expect(log).toEqual(['post 9 o/r#7 :: ### SkillEscrow bounty: 50.00 USDC · 🟢 Open', 'label #7 bounty: 50 USDC']);
+  });
+  it('sets the bounty label when status is DISPUTED', async () => {
+    await refreshBountyCard(deps(), 1n);
+    log.length = 0;
+    await db.bounty.update({ where: { id: 1n }, data: { status: 'DISPUTED' } });
+    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
+    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ⚠️ Disputed', 'label #7 bounty: 50 USDC']);
   });
   it('still renders from stored data when the issue cannot be fetched', async () => {
     failIssue = true;
