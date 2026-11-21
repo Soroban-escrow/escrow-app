@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
-import { daysLeft, money, totals } from './api';
-
-import { daysLeft, money, refundWindow } from './api';
- fresh-build
+import { daysLeft, money, totals, refundWindow } from './api';
 
 describe('formatting', () => {
   it('uses API token precision and never guesses precision for an unknown token', () => {

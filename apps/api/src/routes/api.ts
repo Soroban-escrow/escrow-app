@@ -173,6 +173,24 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     return ser({ ...b, prs: b.prs.map((l) => l.pr) }); // the API keeps returning a flat PR list
   });
 
+  app.post('/bounties/:id/dispute', { ...authed(true), ...mutationLimit }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!/^\d{1,18}$/.test(id)) return err(reply, 404, 'not_found', 'bounty not found');
+    const body = z.object({ reason: z.string().trim().min(3).max(2000) }).safeParse(req.body);
+    if (!body.success) return err(reply, 400, 'bad_request', 'a reason is required');
+    const u = (req as Authed).user!;
+    const bounty = await d.db.bounty.findUnique({ where: { id: BigInt(id) }, include: { prs: { include: { pr: true } } } });
+    if (!bounty) return err(reply, 404, 'not_found', 'bounty not found');
+    const contributor = bounty.prs.some((link) => link.pr.authorGithubId === u.githubId);
+    if (bounty.maintainerGithubId !== u.githubId && !contributor) return err(reply, 403, 'forbidden', 'only the maintainer or a linked contributor can request a dispute');
+    if (!['OPEN', 'DISPUTED'].includes(bounty.status)) return err(reply, 409, 'wrong_state', 'this bounty is no longer disputable');
+    const existing = await d.db.dispute.findFirst({ where: { bountyId: bounty.id, status: { in: ['requested', 'opened_onchain'] } } });
+    if (existing) return err(reply, 409, 'already_requested', 'a dispute is already being reviewed');
+    const dispute = await d.db.dispute.create({ data: { bountyId: bounty.id, openedByGithubId: u.githubId, reason: body.data.reason, evidence: {}, status: 'requested' } });
+    await d.db.auditLog.create({ data: { actor: `github:${u.githubId}`, action: 'dispute.requested', target: `bounty:${bounty.id}`, data: { source: 'web' } } });
+    return { id: dispute.id, status: dispute.status };
+  });
+
   app.get('/me/earnings', authed(false), async (req) => {
     const u = (req as Authed).user!;
     return ser(await d.db.payout.findMany({
