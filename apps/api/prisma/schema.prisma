@@ -56,6 +56,8 @@ model Repo {
   installation   Installation @relation(fields: [installationId], references: [id])
   fullName       String
   private        Boolean
+  /// false once GitHub reports the repo removed from the installation; rows are kept because bounties reference them
+  active         Boolean      @default(true)
   bounties       Bounty[]
   @@index([installationId])
 }
@@ -184,12 +186,19 @@ model Dispute {
   bountyId         BigInt
   bounty           Bounty   @relation(fields: [bountyId], references: [id])
   openedByGithubId BigInt
+  openedByLogin    String?
   reason           String
   evidence         Json
   status           String
   resolutionNote   String?
+  /// The admin's proposed resolution, stored when the unsigned XDR is built. It only becomes
+  /// resolutionNote once the indexer observes an on-chain resolve with the same winner and split.
+  pendingWinner    String?
+  pendingWinnerBps Int?
+  pendingNote      String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  @@index([status])
 }
 
 model WebhookDelivery {

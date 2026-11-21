@@ -88,6 +88,61 @@ export function githubIssueCommenter(d: Pick<SyncDeps, 'db' | 'gh'>): IssueComme
   };
 }
 
+export const REJECT_NOTIFIED_ACTION = 'dispute.rejected.notified';
+
+/** The "A human will review this…" follow-up, addressed to whoever opened the dispute. */
+export async function rejectionCommentBody(
+  db: Db,
+  dispute: { openedByGithubId: bigint; openedByLogin: string | null; resolutionNote: string | null },
+): Promise<string> {
+  const login = dispute.openedByLogin
+    ?? (await db.user.findUnique({ where: { githubId: dispute.openedByGithubId }, select: { githubLogin: true } }))?.githubLogin;
+  const who = login ? `@${login}` : 'the reporter';
+  return `${who}, thanks for flagging this. An admin has reviewed your dispute and rejected it.\n\n> ${dispute.resolutionNote ?? ''}`;
+}
+
+export interface RejectionNotifyDeps {
+  db: Db;
+  commenter: IssueCommenter;
+  log?: (msg: string, extra?: unknown) => void;
+}
+
+/**
+ * Posts the rejection outcome to the bounty issue. The success audit row makes this idempotent and
+ * tells the retry sweep when to stop. A GitHub failure is logged, never propagated to the caller:
+ * the rejection itself is already committed.
+ */
+export async function notifyDisputeRejected(d: RejectionNotifyDeps, disputeId: string): Promise<'sent' | 'failed' | 'skipped'> {
+  const dispute = await d.db.dispute.findUnique({ where: { id: disputeId } });
+  if (!dispute || dispute.status !== 'rejected') return 'skipped';
+  const target = `dispute:${dispute.id}`;
+  if (await d.db.auditLog.findFirst({ where: { action: REJECT_NOTIFIED_ACTION, target } })) return 'skipped';
+  const body = await rejectionCommentBody(d.db, dispute);
+  try {
+    await d.commenter.comment(dispute.bountyId, body);
+    await d.db.auditLog.create({ data: { actor: 'system', action: REJECT_NOTIFIED_ACTION, target, data: { body } } });
+    return 'sent';
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    d.log?.('dispute rejection comment failed; will retry', { dispute: disputeId, error });
+    await d.db.auditLog.create({ data: { actor: 'system', action: 'dispute.rejected.notify_failed', target, data: { error, body } } });
+    return 'failed';
+  }
+}
+
+/** Re-attempts rejections whose follow-up never reached GitHub. Driven by the worker's timer. */
+export async function retryPendingRejectComments(d: RejectionNotifyDeps): Promise<string[]> {
+  const rejected = await d.db.dispute.findMany({ where: { status: 'rejected' }, select: { id: true } });
+  const sent = await d.db.auditLog.findMany({ where: { action: REJECT_NOTIFIED_ACTION }, select: { target: true } });
+  const done = new Set(sent.map((s) => s.target));
+  const retried: string[] = [];
+  for (const r of rejected) {
+    if (done.has(`dispute:${r.id}`)) continue;
+    if (await notifyDisputeRejected(d, r.id) === 'sent') retried.push(r.id);
+  }
+  return retried;
+}
+
 /** "50.00 USDC" style text for paid comments. */
 export const formatPaid = (amount: bigint, feeBps: number, symbol: string) => {
   const net = amount - (amount * BigInt(feeBps)) / 10_000n;

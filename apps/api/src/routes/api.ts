@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../auth/wallet.js';
+import type { IssueCommenter } from '../ops/reminders.js';
 import { COOKIE, csrfToken, csrfValid, destroySession, getSessionUser } from '../auth/session.js';
 import { clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
 import type { Db } from '../db.js';
@@ -21,6 +22,8 @@ export interface ApiDeps {
   tokens?: Array<{ address: string; symbol: string; decimals: number }>;
   /** enables GitHub sign-in (/auth/login, /auth/callback) */
   login?: LoginDeps;
+  /** posts admin dispute decisions back to the issue; failures are retried by the worker */
+  commenter?: IssueCommenter;
 }
 
 const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
@@ -106,7 +109,7 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   if (d.chain) {
     registerFunding(app, { db: d.db, chain: d.chain }, authed);
-    registerAdmin(app, { db: d.db, chain: d.chain }, authed);
+    registerAdmin(app, { db: d.db, chain: d.chain, commenter: d.commenter }, authed);
   }
 
   // ---- public reads ----

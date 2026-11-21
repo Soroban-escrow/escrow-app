@@ -3,13 +3,22 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { contractErrorName } from '../chain/errors.js';
 import type { Db } from '../db.js';
+import { notifyDisputeRejected } from '../github/sync.js';
+import type { IssueCommenter } from '../ops/reminders.js';
 import { mutationLimit } from './limits.js';
 
 export interface AdminChain {
   buildOpenDisputeTx(arbiter: string, bountyId: bigint): Promise<string>;
   buildResolveTx(arbiter: string, bountyId: bigint, winner: string | undefined, winnerBps: number): Promise<string>;
 }
-export interface AdminDeps { db: Db; chain: AdminChain; now?: () => Date }
+export interface AdminDeps {
+  db: Db;
+  chain: AdminChain;
+  now?: () => Date;
+  /** Posts an admin decision back to the GitHub issue. Failures are logged and retried by the worker. */
+  commenter?: IssueCommenter;
+  log?: (msg: string, extra?: unknown) => void;
+}
 
 type Authed = FastifyRequest & { user?: { id: string; githubId: bigint; isAdmin: boolean } };
 const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
@@ -74,8 +83,12 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
     if (x.status !== 'opened_onchain') return err(reply, 409, 'wrong_state', `dispute is ${x.status}; open it on chain first`);
     try {
       const xdr = await d.chain.buildResolveTx(b.data.arbiterAddress, x.bountyId, b.data.winnerBps > 0 ? b.data.winner : undefined, b.data.winnerBps);
-      await d.db.dispute.update({ where: { id: x.id }, data: { resolutionNote: b.data.note } });
-      await audit(req, 'dispute.resolve.build', `dispute:${x.id}`, { winner: b.data.winner ?? null, bps: b.data.winnerBps });
+      // only a proposal: resolutionNote is written by the indexer once the matching resolve lands on chain
+      await d.db.dispute.update({
+        where: { id: x.id },
+        data: { pendingWinner: b.data.winner ?? null, pendingWinnerBps: b.data.winnerBps, pendingNote: b.data.note },
+      });
+      await audit(req, 'dispute.resolve.build', `dispute:${x.id}`, { winner: b.data.winner ?? null, bps: b.data.winnerBps, note: b.data.note });
       return { xdr };
     } catch (e) { return mapErr(reply, e); }
   });
@@ -88,6 +101,11 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
     if (x.status !== 'requested') return err(reply, 409, 'wrong_state', `dispute is ${x.status}`);
     await d.db.dispute.update({ where: { id: x.id }, data: { status: 'rejected', resolutionNote: note.data.note } });
     await audit(req, 'dispute.rejected', `dispute:${x.id}`, { note: note.data.note });
+    if (d.commenter) {
+      try {
+        await notifyDisputeRejected({ db: d.db, commenter: d.commenter, log: d.log }, x.id);
+      } catch (e) { d.log?.('dispute rejection notification failed', e instanceof Error ? e.message : String(e)); }
+    }
     return { ok: true };
   });
 

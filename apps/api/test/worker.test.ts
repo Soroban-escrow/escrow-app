@@ -37,6 +37,43 @@ describe('dispatchWebhook', () => {
     await dispatchWebhook(deps(), 'installation', { ...install, action: 'unsuspend' });
     expect((await db.installation.findUniqueOrThrow({ where: { id: 9n } })).suspendedAt).toBeNull();
   });
+  it('renames a repo and re-bases the issue URLs of its bounties', async () => {
+    await dispatchWebhook(deps(), 'installation', install);
+    await db.bounty.create({ data: { id: 1n, repoId: 100n, issueNumber: 7, issueTitle: '', issueUrl: 'https://github.com/o/r/issues/7', criteria: [], maintainer: 'GM', token: 'C', amount: '1', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
+    expect(await dispatchWebhook(deps(), 'repository', { action: 'renamed', repository: { id: 100, full_name: 'o/renamed' } })).toBe('repository.renamed:1');
+    expect((await db.repo.findUniqueOrThrow({ where: { id: 100n } })).fullName).toBe('o/renamed');
+    expect((await db.bounty.findUniqueOrThrow({ where: { id: 1n } })).issueUrl).toBe('https://github.com/o/renamed/issues/7');
+    // a transfer keeps the repo id and changes the owner
+    expect(await dispatchWebhook(deps(), 'repository', { action: 'transferred', repository: { id: 100, full_name: 'new-owner/renamed' } })).toBe('repository.transferred:1');
+    expect((await db.bounty.findUniqueOrThrow({ where: { id: 1n } })).issueUrl).toBe('https://github.com/new-owner/renamed/issues/7');
+    expect(await dispatchWebhook(deps(), 'repository', { action: 'edited', repository: { id: 100, full_name: 'o/x' } })).toBe('ignored');
+    expect((await db.repo.findUniqueOrThrow({ where: { id: 100n } })).fullName).toBe('new-owner/renamed');
+  });
+  it('marks removed repos inactive, keeps the row, and ignores their commands and PRs', async () => {
+    await dispatchWebhook(deps(), 'installation', install);
+    await dispatchWebhook(deps(), 'installation_repositories', { action: 'added', installation: install.installation, repositories_added: [{ id: 101, full_name: 'o/r2', private: true }] });
+    await db.bounty.create({ data: { id: 2n, repoId: 101n, issueNumber: 7, issueTitle: '', issueUrl: '', criteria: [], maintainer: 'GM', token: 'C', amount: '1', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
+    const out = await dispatchWebhook(deps(), 'installation_repositories', {
+      action: 'removed', installation: install.installation, repositories_removed: [{ id: 101 }],
+    });
+    expect(out).toContain('/-1');
+    expect(await db.repo.count()).toBe(2); // never deleted: bounties reference it
+    expect((await db.repo.findUniqueOrThrow({ where: { id: 101n } })).active).toBe(false);
+    expect((await db.repo.findUniqueOrThrow({ where: { id: 100n } })).active).toBe(true);
+    expect(await dispatchWebhook(deps(), 'issue_comment', {
+      action: 'created', installation: { id: 9 }, repository: { id: 101, full_name: 'o/r2' },
+      issue: { number: 7, state: 'open' }, comment: { id: 1, body: '/bounty 5 USDC 7d', user: { id: 55, login: 'm', type: 'User' } },
+    })).toBe('ignored:inactive-repo');
+    expect(await db.fundingIntent.count()).toBe(0);
+    expect(await dispatchWebhook(deps(), 'pull_request', {
+      action: 'opened', repository: { id: 101, full_name: 'o/r2' },
+      pull_request: { id: 500, number: 3, body: 'Closes #7', merged: false, merged_at: null, state: 'open', head: { sha: 'abc' }, user: { id: 9, login: 'c', type: 'User' } },
+    })).toBe('pull_request:0');
+    expect(await db.pullRequest.count()).toBe(0);
+    // re-added (e.g. installed again) becomes active
+    await dispatchWebhook(deps(), 'installation_repositories', { action: 'added', installation: install.installation, repositories_added: [{ id: 101, full_name: 'o/r2', private: true }] });
+    expect((await db.repo.findUniqueOrThrow({ where: { id: 101n } })).active).toBe(true);
+  });
   it('routes a /bounty comment to the command handler', async () => {
     await dispatchWebhook(deps(), 'installation', install);
     const out = await dispatchWebhook(deps(), 'issue_comment', {

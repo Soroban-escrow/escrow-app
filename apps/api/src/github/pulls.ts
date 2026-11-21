@@ -28,6 +28,8 @@ export type PullDeps = PayoutDeps & { db: Db; reviewTrigger?: (prId: bigint) => 
 export async function handlePullRequest(d: PullDeps, p: PullRequestPayload): Promise<bigint[]> {
   const pr = p.pull_request;
   if (pr.user.type === 'Bot') return [];
+  const repo = await d.db.repo.findUnique({ where: { id: BigInt(p.repository.id) }, select: { active: true } });
+  if (!repo?.active) return [];
   const issues = parseClosingRefs(pr.body, p.repository.full_name);
   if (issues.length === 0) return [];
   const bounties = await d.db.bounty.findMany({

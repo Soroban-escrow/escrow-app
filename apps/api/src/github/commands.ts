@@ -39,6 +39,9 @@ const HELP = [
 /** Returns a short outcome string for logs/tests. Never throws on user error, only on infrastructure failure. */
 export async function handleIssueComment(d: CommandDeps, p: IssueCommentPayload): Promise<string> {
   if (p.comment.user.type === 'Bot') return 'ignored:bot';
+  // a repo removed from the installation (or never installed) must not accept commands
+  const repoRow = await d.db.repo.findUnique({ where: { id: BigInt(p.repository.id) }, select: { active: true } });
+  if (!repoRow?.active) return 'ignored:inactive-repo';
   const cmd = parseCommand(p.comment.body);
   if (!cmd) return 'ignored:not-a-command';
   const inst = p.installation ? BigInt(p.installation.id) : undefined;
@@ -110,7 +113,7 @@ async function handleDispute(
     return await reply('Only the maintainer or an author of a linked PR can open a dispute.'), 'denied';
   }
   await d.db.dispute.create({
-    data: { bountyId: bounty.id, openedByGithubId: uid, reason: reason.slice(0, 2000), evidence: {}, status: 'requested' },
+    data: { bountyId: bounty.id, openedByGithubId: uid, openedByLogin: p.comment.user.login, reason: reason.slice(0, 2000), evidence: {}, status: 'requested' },
   });
   await d.db.auditLog.create({ data: { actor: `github:${uid}`, action: 'dispute.requested', target: `bounty:${bounty.id}`, data: {} } });
   await reply('Dispute recorded. A human will review this within 48 hours.');
