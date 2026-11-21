@@ -97,6 +97,10 @@ describe('payouts and status', () => {
     const withHash = await mk('release:2', { txHash: 'H' });
     expect((await a.inject({ method: 'POST', url: `/admin/payouts/${withHash.id}/retry`, headers: h, payload: {} })).json().error.code).toBe('has_tx_hash');
     expect((await a.inject({ url: '/admin/payouts', headers: h })).json()).toHaveLength(1);
+    const bad = await a.inject({ url: '/admin/payouts?status=UNKNOWN_STATUS', headers: h });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.code).toBe('bad_request');
+    expect(bad.json().error.message).toContain('status must be one of: FAILED, PENDING_WALLET, AWAITING_MAINTAINER, QUEUED, SUBMITTED, CONFIRMED');
   });
   it('reports status counts', async () => {
     const { a, h } = await login(2n, true);

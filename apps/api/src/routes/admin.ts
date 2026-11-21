@@ -93,8 +93,12 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
 
   app.get('/admin/payouts', adminOnly(false), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
-    const status = z.enum(['FAILED', 'PENDING_WALLET', 'AWAITING_MAINTAINER', 'QUEUED', 'SUBMITTED', 'CONFIRMED']).default('FAILED').parse((req.query as { status?: string }).status ?? 'FAILED');
-    return ser(await d.db.payout.findMany({ where: { status }, orderBy: { updatedAt: 'desc' }, take: 100 }));
+    const allowed = ['FAILED', 'PENDING_WALLET', 'AWAITING_MAINTAINER', 'QUEUED', 'SUBMITTED', 'CONFIRMED'] as const;
+    const parsed = z.enum(allowed).safeParse((req.query as { status?: string }).status ?? 'FAILED');
+    if (!parsed.success) {
+      return err(reply, 400, 'bad_request', `status must be one of: ${allowed.join(', ')}`);
+    }
+    return ser(await d.db.payout.findMany({ where: { status: parsed.data }, orderBy: { updatedAt: 'desc' }, take: 100 }));
   });
 
   /** Only payouts with no submitted transaction can be re-queued; one with a hash must be checked on chain first. */
