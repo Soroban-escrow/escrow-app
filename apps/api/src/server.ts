@@ -10,6 +10,7 @@ export interface DeliveryStore {
   /** returns false if the delivery id was already seen */
   insert(id: string, event: string): Promise<boolean>;
   enqueue(id: string, event: string, payload: unknown): Promise<void>;
+  rollback?(id: string): Promise<void>;
 }
 
 export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDeps, health?: () => Promise<{ ok: boolean }>): Promise<FastifyInstance> {
@@ -60,7 +61,14 @@ export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDe
       return reply.code(400).send({ error: { code: 'bad_json', message: 'invalid JSON' } });
     }
     if (!(await store.insert(id, event))) return reply.code(200).send({ duplicate: true });
-    await store.enqueue(id, event, payload);
+    try {
+      await store.enqueue(id, event, payload);
+    } catch (err) {
+      if (store.rollback) {
+        await store.rollback(id);
+      }
+      return reply.code(500).send({ error: { code: 'enqueue_failed', message: 'failed to enqueue webhook delivery' } });
+    }
     return reply.code(202).send({ queued: true });
   });
 

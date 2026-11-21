@@ -16,11 +16,18 @@ const sign = (body: string) => 'sha256=' + createHmac('sha256', 'hooksecret').up
 function fake() {
   const seen = new Set<string>();
   const queued: string[] = [];
+  let failEnqueue = false;
   const store: DeliveryStore = {
     insert: async (id) => (seen.has(id) ? false : (seen.add(id), true)),
-    enqueue: async (id) => void queued.push(id),
+    enqueue: async (id) => {
+      if (failEnqueue) throw new Error('Redis connection down');
+      queued.push(id);
+    },
+    rollback: async (id) => {
+      seen.delete(id);
+    },
   };
-  return { store, queued };
+  return { store, queued, setFailEnqueue: (fail: boolean) => { failEnqueue = fail; } };
 }
 
 const post = (app: Awaited<ReturnType<typeof buildServer>>, body: string, headers: Record<string, string>) =>
@@ -57,6 +64,30 @@ describe('webhook', () => {
     const h = { 'x-hub-signature-256': sign(body), 'x-github-delivery': 'd1', 'x-github-event': 'issues' };
     expect((await post(app, body, h)).statusCode).toBe(202);
     expect((await post(app, body, h)).statusCode).toBe(200);
+    expect(queued).toEqual(['d1']);
+  });
+  it('rolls back delivery record on enqueue failure and allows redelivery', async () => {
+    const { store, queued, setFailEnqueue } = fake();
+    const app = await buildServer(loadConfig(env), store);
+    const h = { 'x-hub-signature-256': sign(body), 'x-github-delivery': 'd1', 'x-github-event': 'issues' };
+
+    // Simulate transient failure during enqueue (e.g. Redis unavailable)
+    setFailEnqueue(true);
+    const failResp = await post(app, body, h);
+    expect(failResp.statusCode).toBe(500);
+    expect(failResp.json().error.code).toBe('enqueue_failed');
+    expect(queued).toEqual([]);
+
+    // GitHub retries the delivery: enqueue succeeds now
+    setFailEnqueue(false);
+    const retryResp = await post(app, body, h);
+    expect(retryResp.statusCode).toBe(202);
+    expect(queued).toEqual(['d1']);
+
+    // Later delivery with the same id is recognized as duplicate
+    const dupResp = await post(app, body, h);
+    expect(dupResp.statusCode).toBe(200);
+    expect(dupResp.json().duplicate).toBe(true);
     expect(queued).toEqual(['d1']);
   });
   it('health', async () => {
