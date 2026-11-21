@@ -1,7 +1,7 @@
 import { nativeToScVal, Keypair } from '@stellar/stellar-sdk';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
-import { applyEvent } from '../src/indexer/apply.js';
+import { applyEvent, decodeFundEvent } from '../src/indexer/apply.js';
 import { decodeEvent, type ChainEvent } from '../src/indexer/decode.js';
 
 const db = createDb(process.env.TEST_DATABASE_URL ?? 'postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test');
@@ -49,7 +49,7 @@ const run = (ev: ChainEvent, n: number) => db.$transaction((tx) => applyEvent(tx
 
 describe('applyEvent', () => {
   beforeEach(async () => {
-    await db.$executeRawUnsafe('TRUNCATE "Payout","Dispute","PullRequestBounty","PullRequest","Bounty","FundingIntent","Repo","Installation" CASCADE');
+    await db.$executeRawUnsafe('TRUNCATE "Payout","Dispute","PullRequestBounty","PullRequest","Bounty","FundingIntent","UntrackedFundEvent","Repo","Installation" CASCADE');
     await db.installation.create({ data: { id: 1n, accountLogin: 'o', accountType: 'User' } });
     await db.repo.create({ data: { id: 100n, installationId: 1n, fullName: 'o/r', private: false } });
   });
@@ -79,6 +79,19 @@ describe('applyEvent', () => {
     expect(await run(funded({ repoId: 999n }), 1)).toBe('untracked');
     expect(await run({ kind: 'refunded', id: 5n, amount: 1n }, 2)).toBe('untracked');
     expect(await db.bounty.count()).toBe(0);
+  });
+
+  it('parks a funded event for an untracked repo so it can be replayed later', async () => {
+    const ev = funded({ repoId: 999n, id: 42n }) as Extract<ChainEvent, { kind: 'funded' }>;
+    expect(await run(ev, 1)).toBe('untracked');
+    const row = await db.untrackedFundEvent.findUniqueOrThrow({ where: { id: 42n } });
+    expect(row.repoId).toBe(999n);
+    const { ev: decoded, meta: decodedMeta } = decodeFundEvent(row.payload);
+    expect(decoded).toEqual(ev);
+    expect(decodedMeta).toEqual(meta(1));
+    // re-seeing the same event is idempotent: one stored row, not two
+    expect(await run(ev, 1)).toBe('untracked');
+    expect(await db.untrackedFundEvent.count()).toBe(1);
   });
 
   it('dispute requests follow the chain: opened_onchain, then resolved', async () => {

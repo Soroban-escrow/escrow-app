@@ -207,6 +207,16 @@ model IndexerCursor {
   updatedAt DateTime @updatedAt
 }
 
+/// A funded event for a repo we do not track yet. Kept so a late installation can replay it
+/// instead of losing the bounty when the cursor has already moved past the event.
+model UntrackedFundEvent {
+  id        BigInt   @id // bounty id from the fund event
+  repoId    BigInt
+  payload   String   // serialized ChainEvent + EventMeta (bigints tagged so JSON round-trips)
+  createdAt DateTime @default(now())
+  @@index([repoId])
+}
+
 model AuditLog {
   id        String   @id @default(cuid())
   actor     String

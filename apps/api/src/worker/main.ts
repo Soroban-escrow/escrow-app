@@ -67,7 +67,7 @@ else log('relayer disabled: RELAYER_SECRET not set (testnet/dev only; mainnet ne
 
 // Reminders are real issue comments when GitHub is configured; otherwise they fail without being marked as sent.
 const reminderTimer = setInterval(() => {
-  sendRefundReminders({ db, graceMs: 72 * 3600e3, webUrl: cfg.WEB_PUBLIC_URL, commenter: ghClient ? githubIssueCommenter({ db, gh: ghClient }) : { comment: async () => notConfigured() } })
+  sendRefundReminders({ db, graceMs: 72 * 3600e3, webUrl: cfg.WEB_PUBLIC_URL, log, commenter: ghClient ? githubIssueCommenter({ db, gh: ghClient }) : { comment: async () => notConfigured() } })
     .catch((e) => log('reminders skipped', e instanceof Error ? e.message : String(e)));
 }, 3600e3);
 

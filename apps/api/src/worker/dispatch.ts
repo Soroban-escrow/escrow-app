@@ -1,5 +1,6 @@
 import type { Db } from '../db.js';
 import { parseCriteria } from '../github/criteria.js';
+import { replayUntrackedFunds } from '../indexer/replay.js';
 import { handleIssueComment, type CommandDeps, type IssueCommentPayload } from '../github/commands.js';
 import { handlePullRequest, type PullDeps, type PullRequestPayload } from '../github/pulls.js';
 
@@ -30,6 +31,8 @@ async function upsertRepos(db: Db, installationId: bigint, repos: { id: number; 
       create: { id: BigInt(r.id), installationId, fullName: r.full_name, private: r.private },
       update: { installationId, fullName: r.full_name, private: r.private },
     });
+    // A bounty may have been funded before the app was installed on this repo.
+    await replayUntrackedFunds(db, BigInt(r.id));
   }
 }
 

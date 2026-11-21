@@ -9,6 +9,27 @@ export interface EventMeta {
 
 export type Outcome = 'applied' | 'stale' | 'untracked' | 'anomaly';
 
+type FundedEvent = Extract<ChainEvent, { kind: 'funded' }>;
+const BIGINT_TAG = '__bigint__';
+
+/** JSON cannot represent bigints; tag them so a stored event round-trips exactly. */
+const toJson = (_key: string, value: unknown) =>
+  typeof value === 'bigint' ? { [BIGINT_TAG]: value.toString() } : value;
+const fromJson = (_key: string, value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value) && BIGINT_TAG in value
+    ? BigInt((value as Record<string, string>)[BIGINT_TAG]!)
+    : value;
+
+/** Serialize an untracked funded event together with the cursor metadata needed to replay it. */
+export function encodeFundEvent(ev: FundedEvent, meta: EventMeta): string {
+  return JSON.stringify({ ev, meta }, toJson);
+}
+
+export function decodeFundEvent(payload: string): { ev: FundedEvent; meta: EventMeta } {
+  const parsed = JSON.parse(payload, fromJson) as { ev: FundedEvent; meta: Omit<EventMeta, 'closedAt'> & { closedAt: string } };
+  return { ev: parsed.ev, meta: { ...parsed.meta, closedAt: new Date(parsed.meta.closedAt) } };
+}
+
 /**
  * Applies one event inside the caller's transaction. Idempotent: every bounty records the last
  * event applied, so replaying an old event is recognised as stale instead of re-applied.
@@ -17,7 +38,17 @@ export type Outcome = 'applied' | 'stale' | 'untracked' | 'anomaly';
 export async function applyEvent(tx: Prisma.TransactionClient, ev: ChainEvent, meta: EventMeta): Promise<Outcome> {
   if (ev.kind === 'funded') {
     const repo = await tx.repo.findUnique({ where: { id: ev.repoId } });
-    if (!repo) return 'untracked'; // anyone can fund any repo on-chain; we only track installed ones
+    if (!repo) {
+      // anyone can fund any repo on-chain; we only track installed ones. Keep the event so a
+      // later installation can replay it — the cursor will not revisit it.
+      const payload = encodeFundEvent(ev, meta);
+      await tx.untrackedFundEvent.upsert({
+        where: { id: ev.id },
+        create: { id: ev.id, repoId: ev.repoId, payload },
+        update: { payload },
+      });
+      return 'untracked';
+    }
     const existing = await tx.bounty.findUnique({ where: { id: ev.id } });
     if (existing) return existing.lastEventId && existing.lastEventId >= meta.eventId ? 'stale' : 'anomaly';
     const issueNumber = Number(ev.issue);

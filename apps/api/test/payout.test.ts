@@ -66,6 +66,24 @@ describe('onMerge', () => {
     await merge();
     expect(await status()).toBe('FAILED');
   });
+  it('explains the maintainer conflict on the PR and retries once a different wallet is linked', async () => {
+    await user('GMAINT');
+    expect(await merge()).toBe('created');
+    expect(await status()).toBe('FAILED');
+    expect(notes.some((n) => /different wallet/i.test(n) && n.includes('/me'))).toBe(true);
+    await db.user.update({ where: { githubId: 9n }, data: { wallet: 'GWINNER' } });
+    expect(await onWalletLinked(deps(), 9n)).toBe(1);
+    expect(await status()).toBe('QUEUED');
+    expect((await db.payout.findFirstOrThrow()).winnerAddress).toBe('GWINNER');
+  });
+  it('posts one explanatory comment with the on-chain status when the bounty is not open', async () => {
+    await user('GWINNER');
+    chainState.status = 'Refunded';
+    expect(await merge()).toBe('not-open');
+    expect(await db.payout.count()).toBe(0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain('Refunded');
+  });
   it('concurrent advances move the payout once', async () => {
     await user('GWINNER');
     await db.payout.create({ data: { bountyId: 1n, prNumber: 3, winnerGithubId: 9n, status: 'PENDING_WALLET', idempotencyKey: 'release:1' } });
