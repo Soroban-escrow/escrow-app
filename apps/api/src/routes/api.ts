@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../auth/wallet.js';
 import { COOKIE, csrfToken, csrfValid, destroySession, getSessionUser } from '../auth/session.js';
 import { clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
+import { parseCookies } from './cookies.js';
 import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
 import { registerAdmin, type AdminChain } from './admin.js';
@@ -32,8 +33,7 @@ const ser = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (_, x) => (typ
 type Authed = FastifyRequest & { sessionId?: string; user?: NonNullable<Awaited<ReturnType<typeof getSessionUser>>> };
 
 export function registerApi(app: FastifyInstance, d: ApiDeps) {
-  const cookies = (req: FastifyRequest) =>
-    Object.fromEntries((req.headers.cookie ?? '').split(';').map((c) => c.trim().split('=') as [string, string]).filter(([k]) => k));
+  const cookies = (req: FastifyRequest) => parseCookies(req.headers.cookie);
 
   async function requireUser(req: Authed, reply: FastifyReply, mutating: boolean) {
     const sid = cookies(req)[COOKIE];
