@@ -1,5 +1,6 @@
 import { Client, type Bounty, type Config, type TokenLimits } from '@skillescrow/contract-client';
 import { rpc, TransactionBuilder, Transaction } from '@stellar/stellar-sdk';
+import { SubmitTxError } from './errors.js';
 
 export interface ChainConfig {
   rpcUrl: string;
@@ -7,8 +8,11 @@ export interface ChainConfig {
   contractId: string;
 }
 
-export function createChain(cfg: ChainConfig) {
-  const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith('http://') });
+const SUBMIT_RETRY_ATTEMPTS = 3;
+const SUBMIT_RETRY_DELAY_MS = 500;
+
+export function createChain(cfg: ChainConfig, serverOverride?: rpc.Server) {
+  const server = serverOverride ?? new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith('http://') });
   const client = (publicKey?: string) =>
     new Client({ contractId: cfg.contractId, networkPassphrase: cfg.networkPassphrase, rpcUrl: cfg.rpcUrl, ...(publicKey ? { publicKey } : {}) });
 
@@ -91,9 +95,17 @@ export function createChain(cfg: ChainConfig) {
       const op = tx.operations[0]!;
       if (op.type !== 'invokeHostFunction') throw new Error('not a contract call');
       if (expectedSource && tx.source !== expectedSource) throw new Error('unexpected source account');
-      const r = await server.sendTransaction(tx);
-      if (r.status === 'ERROR') throw new Error(`submit failed: ${r.status}`);
-      return r.hash;
+      for (let attempt = 1; attempt <= SUBMIT_RETRY_ATTEMPTS; attempt++) {
+        const r = await server.sendTransaction(tx);
+        if (r.status === 'PENDING' || r.status === 'DUPLICATE') return r.hash;
+        if (r.status === 'TRY_AGAIN_LATER') {
+          if (attempt === SUBMIT_RETRY_ATTEMPTS) throw new SubmitTxError('TRY_AGAIN_LATER', r.hash, attempt);
+          await new Promise((res) => setTimeout(res, SUBMIT_RETRY_DELAY_MS));
+          continue;
+        }
+        throw new Error(`submit failed: ${r.status}`);
+      }
+      throw new SubmitTxError('TRY_AGAIN_LATER', '', SUBMIT_RETRY_ATTEMPTS);
     },
 
     async waitForTx(hash: string, timeoutMs = 60_000) {
