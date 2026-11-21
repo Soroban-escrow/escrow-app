@@ -4,6 +4,7 @@ export type Command =
   | { kind: 'fund'; amount: bigint; token: 'USDC' | 'XLM'; days: number }
   | { kind: 'dispute'; reason: string }
   | { kind: 'review' }
+  | { kind: 'status' }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -17,6 +18,7 @@ export function parseCommand(body: string): Command | null {
   const rest = parts.slice(1);
   const head = (rest[0] ?? '').toLowerCase();
   if (head === 'help' || rest.length === 0) return { kind: 'help' };
+  if (head === 'status') return { kind: 'status' };
   if (head === 'review') return { kind: 'review' };
   if (head === 'dispute') {
     const reason = rest.slice(1).join(' ').trim();

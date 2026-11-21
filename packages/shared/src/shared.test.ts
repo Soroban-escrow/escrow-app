@@ -64,9 +64,12 @@ describe('parseCommand', () => {
     expect(parseCommand('/bounty 5 0d')).toMatchObject({ kind: 'error' });
     expect(parseCommand('/bounty dispute')).toMatchObject({ kind: 'error' });
   });
-  it('parses dispute, review, help', () => {
+  it('parses dispute, review, status, help', () => {
     expect(parseCommand('/bounty dispute not paid')).toEqual({ kind: 'dispute', reason: 'not paid' });
     expect(parseCommand('/bounty review')).toEqual({ kind: 'review' });
+    expect(parseCommand('/bounty status')).toEqual({ kind: 'status' });
+    expect(parseCommand('  /bounty   status  ')).toEqual({ kind: 'status' });
+    expect(parseCommand('/bounty STATUS')).toEqual({ kind: 'status' });
     expect(parseCommand('/bounty')).toEqual({ kind: 'help' });
     expect(parseCommand('/bounty help')).toEqual({ kind: 'help' });
   });
