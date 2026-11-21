@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { contractErrorName } from '../chain/errors.js';
 import type { Db } from '../db.js';
+import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
 import { mutationLimit } from './limits.js';
 
 export interface AdminChain {
@@ -14,7 +15,6 @@ export interface AdminDeps { db: Db; chain: AdminChain; now?: () => Date }
 type Authed = FastifyRequest & { user?: { id: string; githubId: bigint; isAdmin: boolean } };
 const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
 const ser = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? x.toString() : x)));
-const HOURS = 36;
 
 export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutating: boolean) => object) {
   const now = () => (d.now ?? (() => new Date()))();
@@ -30,7 +30,7 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
       where: { status: { in: ['requested', 'opened_onchain'] } }, orderBy: { createdAt: 'asc' },
       include: { bounty: { include: { prs: { include: { pr: { include: { reviews: { take: 1, orderBy: { createdAt: 'desc' } } } } } }, payouts: true, repo: { select: { fullName: true } } } } },
     });
-    return ser(rows.map((r) => ({ ...r, bounty: { ...r.bounty, prs: r.bounty.prs.map((l) => l.pr) }, overdue: now().getTime() - r.createdAt.getTime() > HOURS * 3600e3 })));
+    return ser(rows.map((r) => ({ ...r, bounty: { ...r.bounty, prs: r.bounty.prs.map((l) => l.pr) }, overdue: now().getTime() - r.createdAt.getTime() > DISPUTE_REVIEW_HOURS * 3600e3 })));
   });
 
   const idOk = (id: string) => /^[a-z0-9]{10,40}$/.test(id);

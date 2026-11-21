@@ -1,4 +1,5 @@
 import type { Db } from '../db.js';
+import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
 
 export interface AlertInputs {
   db: Db;
@@ -9,7 +10,7 @@ export interface AlertInputs {
   latestLedger?: number;
 }
 
-const HOURS = 3600e3;
+const HOUR_MS = 3600e3;
 
 const RUNBOOK_URL = 'docs/RUNBOOK.md';
 
@@ -28,12 +29,12 @@ export async function collectAlerts(a: AlertInputs): Promise<string[]> {
     // 60 ledgers is about 5 minutes
     out.push(`Indexer is ${a.latestLedger - cursor.ledger} ledgers behind — see ${RUNBOOK_URL}#alert-indexer-lag`);
   }
-  const stale = await a.db.dispute.count({ where: { status: { in: ['requested', 'opened_onchain'] }, createdAt: { lt: new Date(now.getTime() - 36 * HOURS) } } });
-  if (stale > 0) out.push(`${stale} dispute(s) older than 36 h — see ${RUNBOOK_URL}#alert-disputes-overdue`);
+  const stale = await a.db.dispute.count({ where: { status: { in: ['requested', 'opened_onchain'] }, createdAt: { lt: new Date(now.getTime() - DISPUTE_REVIEW_HOURS * HOUR_MS) } } });
+  if (stale > 0) out.push(`${stale} dispute(s) older than ${DISPUTE_REVIEW_HOURS} h — see ${RUNBOOK_URL}#alert-disputes-overdue`);
 
   // merged-but-unpaid PRs whose refund window opens within 72 h: the arbiter may need to act
   const risky = await a.db.payout.findMany({
-    where: { status: { in: ['PENDING_WALLET', 'AWAITING_MAINTAINER', 'FAILED'] }, bounty: { status: 'OPEN', deadline: { lt: new Date(now.getTime() + 72 * HOURS) } } },
+    where: { status: { in: ['PENDING_WALLET', 'AWAITING_MAINTAINER', 'FAILED'] }, bounty: { status: 'OPEN', deadline: { lt: new Date(now.getTime() + 72 * HOUR_MS) } } },
     include: { bounty: { select: { id: true, deadline: true } } },
   });
   for (const p of risky) out.push(`Bounty ${p.bounty.id} has a merged PR (${p.status}) and its refund window is near — see ${RUNBOOK_URL}#alert-refund-window-near`);
@@ -41,7 +42,7 @@ export async function collectAlerts(a: AlertInputs): Promise<string[]> {
 }
 
 /** Sends alerts to the webhook, at most once per message per cooldown. */
-export function alertSender(url: string | undefined, log: (m: string, x?: unknown) => void, cooldownMs = HOURS, fetchImpl: typeof fetch = fetch) {
+export function alertSender(url: string | undefined, log: (m: string, x?: unknown) => void, cooldownMs = HOUR_MS, fetchImpl: typeof fetch = fetch) {
   const sent = new Map<string, number>();
   return async (messages: string[], now = Date.now()) => {
     for (const m of messages) {

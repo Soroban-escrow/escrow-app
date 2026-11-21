@@ -91,6 +91,47 @@ describe('calls', () => {
     expect(g.calls.some((x) => x.method === 'DELETE' && x.path.endsWith('bounty%3A%2010%20USDC'))).toBe(true);
     expect(g.calls.at(-1)!.body).toEqual({ labels: ['bounty: 50 USDC'] });
   });
+  it('clears every bounty label from the issue', async () => {
+    const g = fakeGithub();
+    g.routes['GET /repos/o/r/issues/7/labels'] = () => ({
+      status: 200, json: [{ name: 'bounty: 50 USDC' }, { name: 'bug' }, { name: 'bounty: 30 XLM' }],
+    });
+    g.routes['DELETE /repos/o/r/issues/7/labels/bounty%3A%2050%20USDC'] = () => ({ status: 200, json: [] });
+    g.routes['DELETE /repos/o/r/issues/7/labels/bounty%3A%2030%20XLM'] = () => ({ status: 200, json: [] });
+    await make(g).clearBountyLabel(9n, 'o/r', 7);
+    expect(g.calls.filter((x) => x.method === 'DELETE').map((x) => x.path)).toEqual([
+      '/repos/o/r/issues/7/labels/bounty%3A%2050%20USDC',
+      '/repos/o/r/issues/7/labels/bounty%3A%2030%20XLM',
+    ]);
+  });
+  it('lists installations across every page', async () => {
+    const g = fakeGithub();
+    const inst = (id: number) => ({ id, account: { login: 'o', type: 'User' }, suspended_at: null });
+    g.routes['GET /app/installations'] = (c) => ({
+      status: 200,
+      json: new URLSearchParams(c.path.split('?')[1]).get('page') === '1'
+        ? Array.from({ length: 100 }, (_, i) => inst(i + 1))
+        : [inst(101)],
+    });
+    const all = await make(g).listInstallations();
+    expect(all).toHaveLength(101);
+    expect(all.at(-1)!.id).toBe(101);
+    expect(g.calls.filter((x) => x.path.startsWith('/app/installations?'))).toHaveLength(2);
+  });
+  it('lists all repositories, following total_count across pages', async () => {
+    const g = fakeGithub();
+    const repo = (id: number) => ({ id, full_name: `o/r${id}`, private: false });
+    g.routes['GET /installation/repositories'] = (c) => ({
+      status: 200,
+      json: new URLSearchParams(c.path.split('?')[1]).get('page') === '1'
+        ? { total_count: 105, repositories: Array.from({ length: 100 }, (_, i) => repo(i + 1)) }
+        : { total_count: 105, repositories: Array.from({ length: 5 }, (_, i) => repo(i + 101)) },
+    });
+    const all = await make(g).listRepositories(9n);
+    expect(all).toHaveLength(105);
+    expect(all.map((r) => r.id)).toEqual(Array.from({ length: 105 }, (_, i) => i + 1));
+    expect(g.calls.filter((x) => x.path.startsWith('/installation/repositories?'))).toHaveLength(2);
+  });
   it('reads PR files across pages and summarises CI', async () => {
     const g = fakeGithub();
     const page = (n: number) => Array.from({ length: n }, (_, i) => ({ filename: `f${i}`, additions: 1, deletions: 0, patch: '+x' }));

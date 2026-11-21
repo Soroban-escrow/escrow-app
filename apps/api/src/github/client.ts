@@ -70,14 +70,27 @@ export function createGithubClient(cfg: GithubClientConfig) {
   const client = {
     /** All installations of this App (authenticated as the App itself, not an installation). */
     async listInstallations(): Promise<{ id: number; account: { login: string; type: string }; suspended_at: string | null }[]> {
-      const r = await doFetch(`${api}/app/installations?per_page=100`, { headers: { ...base, authorization: `Bearer ${appJwt()}` } });
-      if (!r.ok) throw new GithubError(r.status, `list installations: ${r.status}`);
-      return (await r.json()) as never;
+      const out: { id: number; account: { login: string; type: string }; suspended_at: string | null }[] = [];
+      // The installations endpoint returns a bare array, so a short page is the last one.
+      for (let page = 1; ; page++) {
+        const r = await doFetch(`${api}/app/installations?per_page=100&page=${page}`, { headers: { ...base, authorization: `Bearer ${appJwt()}` } });
+        if (!r.ok) throw new GithubError(r.status, `list installations: ${r.status}`);
+        const batch = (await r.json()) as typeof out;
+        out.push(...batch);
+        if (batch.length < 100) break;
+      }
+      return out;
     },
 
     async listRepositories(installation: bigint): Promise<{ id: number; full_name: string; private: boolean }[]> {
-      const j = await json<{ repositories: { id: number; full_name: string; private: boolean }[] }>(installation, 'GET', '/installation/repositories?per_page=100');
-      return j.repositories;
+      const out: { id: number; full_name: string; private: boolean }[] = [];
+      // `total_count` is the authoritative size; a short page is a fallback for fakes/proxies that omit it.
+      for (let page = 1; ; page++) {
+        const j = await json<{ total_count?: number; repositories: typeof out }>(installation, 'GET', `/installation/repositories?per_page=100&page=${page}`);
+        out.push(...j.repositories);
+        if (j.repositories.length < 100 || (j.total_count !== undefined && out.length >= j.total_count)) break;
+      }
+      return out;
     },
 
     /** repo permission of a user: admin | maintain | write | triage | read | none */
@@ -115,6 +128,17 @@ export function createGithubClient(cfg: GithubClientConfig) {
       const made = await call(installation, 'POST', `/repos/${repo}/labels`, { name: label, color });
       if (!made.ok && made.status !== 422) throw new GithubError(made.status, `create label: ${made.status}`); // 422 = already exists
       await json(installation, 'POST', `/repos/${repo}/issues/${issue}/labels`, { labels: [label] });
+    },
+
+    /** Removes every "bounty:" label from the issue (called when a bounty is closed). */
+    async clearBountyLabel(installation: bigint, repo: string, issue: number): Promise<void> {
+      repoOk(repo); positive(issue, 'issue');
+      const existing = await json<{ name: string }[]>(installation, 'GET', `/repos/${repo}/issues/${issue}/labels?per_page=100`);
+      for (const l of existing) {
+        if (l.name.startsWith('bounty:')) {
+          await call(installation, 'DELETE', `/repos/${repo}/issues/${issue}/labels/${encodeURIComponent(l.name)}`);
+        }
+      }
     },
 
     /** Changed files with patches (paginated, capped at 300 files). */

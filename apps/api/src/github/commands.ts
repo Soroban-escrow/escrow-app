@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { fromBaseUnits, parseCommand } from '@skillescrow/shared';
 import type { Db } from '../db.js';
+import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
 
 export interface GithubPort {
   /** repo permission of a user: admin | maintain | write | triage | read | none */
@@ -113,6 +114,6 @@ async function handleDispute(
     data: { bountyId: bounty.id, openedByGithubId: uid, reason: reason.slice(0, 2000), evidence: {}, status: 'requested' },
   });
   await d.db.auditLog.create({ data: { actor: `github:${uid}`, action: 'dispute.requested', target: `bounty:${bounty.id}`, data: {} } });
-  await reply('Dispute recorded. A human will review this within 48 hours.');
+  await reply(`Dispute recorded. A human will review this within ${DISPUTE_REVIEW_HOURS} hours.`);
   return 'dispute-requested';
 }
