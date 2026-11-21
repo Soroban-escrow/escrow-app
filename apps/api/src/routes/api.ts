@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../auth/wallet.js';
 import { COOKIE, csrfToken, csrfValid, destroySession, getSessionUser } from '../auth/session.js';
-import { clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
+import { clearSessionCookie, clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
 import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
 import { registerAdmin, type AdminChain } from './admin.js';
@@ -49,9 +49,10 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
   });
   const mutationLimit = limit(20);
 
+  const secure = Boolean(d.login?.callbackUrl.startsWith('https://'));
+
   if (d.login) {
     const login = d.login;
-    const secure = login.callbackUrl.startsWith('https://');
     app.get('/auth/login', async (req, reply) => {
       const { url, cookie } = startLogin(login, (req.query as { next?: string }).next);
       return reply.header('set-cookie', stateCookie(cookie, secure)).redirect(url);
@@ -74,7 +75,7 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   app.post('/auth/logout', authed(true), async (req, reply) => {
     await destroySession(d.db, (req as Authed).sessionId!);
-    return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
+    return reply.header('set-cookie', clearSessionCookie(secure)).send({ ok: true });
   });
 
   const walletBody = z.object({ address: z.string() });
