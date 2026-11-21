@@ -19,6 +19,9 @@ const store: DeliveryStore = {
     catch (e) { if ((e as { code?: string }).code === 'P2002') return false; throw e; }
   },
   enqueue: (id, event, payload) => producer.enqueue(id, event, payload),
+  rollback: async (id) => {
+    await db.webhookDelivery.deleteMany({ where: { id } }).catch(() => {});
+  },
 };
 
 const chain = createChain({ rpcUrl: cfg.STELLAR_RPC_URL, networkPassphrase: cfg.STELLAR_NETWORK_PASSPHRASE, contractId: cfg.BOUNTY_CONTRACT_ID });
