@@ -1,7 +1,57 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  check:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 26 }
+      - uses: pnpm/action-setup@a7e5c76f026f6df8da55e59f9e7310e4e9e84606 # v4
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @skillescrow/contract-client build
+      - run: pnpm --filter @skillescrow/api exec prisma generate
+      - run: pnpm audit --audit-level=high
+
+  typecheck:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 26 }
+      - uses: pnpm/action-setup@a7e5c76f026f6df8da55e59f9e7310e4e9e84606 # v4
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @skillescrow/contract-client build
+      - run: pnpm --filter @skillescrow/api exec prisma generate
+      - run: pnpm -r typecheck
+
+  test:
+    needs: install
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -18,19 +68,56 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 26 }
-      - run: npm i -g pnpm@12.16.1
+      - uses: pnpm/action-setup@a7e5c76f026f6df8da55e59f9e7310e4e9e84606 # v4
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @skillescrow/contract-client build
       - run: pnpm --filter @skillescrow/api exec prisma generate
       - run: pnpm --filter @skillescrow/api exec prisma migrate deploy
-      - run: pnpm audit --audit-level=high
-      - run: pnpm -r typecheck
       - run: pnpm -r test
+
+  e2e:
+    needs: install
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env: { POSTGRES_USER: skillescrow, POSTGRES_PASSWORD: skillescrow, POSTGRES_DB: skillescrow_test }
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U skillescrow" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ['6379:6379']
+    env:
+      E2E_DATABASE_URL: postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test
+      REDIS_URL: redis://localhost:6379/2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 26 }
+      - uses: pnpm/action-setup@a7e5c76f026f6df8da55e59f9e7310e4e9e84606 # v4
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @skillescrow/contract-client build
+      - run: pnpm --filter @skillescrow/api exec prisma generate
+      - run: pnpm --filter @skillescrow/api exec prisma migrate deploy
       - run: pnpm --filter @skillescrow/e2e exec playwright install --with-deps chromium
       - run: pnpm --filter @skillescrow/e2e e2e
-        env:
-          E2E_DATABASE_URL: postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test
-          REDIS_URL: redis://localhost:6379/2
+
   secrets:
     runs-on: ubuntu-latest
     steps:
