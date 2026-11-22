@@ -32,9 +32,13 @@ const WRITERS = new Set(['admin', 'maintain', 'write']);
 const HELP = [
   '**SkillEscrow commands**',
   '- `/bounty <amount> [USDC|XLM] [<days>d]` fund this issue, e.g. `/bounty 50 USDC 14d` (needs write access)',
+  '- `/bounty status` show bounty amount, status, deadline, linked PRs and payout state',
   '- `/bounty dispute <reason>` flag a problem on a bountied issue',
   '- `/bounty help`',
 ].join('\n');
+
+export const statusRateLimits = new Map<string, number>();
+export const STATUS_COOLDOWN_MS = 60_000;
 
 /** Returns a short outcome string for logs/tests. Never throws on user error, only on infrastructure failure. */
 export async function handleIssueComment(d: CommandDeps, p: IssueCommentPayload): Promise<string> {
@@ -48,6 +52,7 @@ export async function handleIssueComment(d: CommandDeps, p: IssueCommentPayload)
 
   if (cmd.kind === 'help') return await reply(HELP), 'help';
   if (cmd.kind === 'error') return await reply(`${cmd.message}\n\n${HELP}`), 'error';
+  if (cmd.kind === 'status') return handleStatus(d, p, reply);
   if (cmd.kind === 'review') {
     if (!p.issue.pull_request) return 'ignored:review-not-on-issues';
     const perm = await d.gh.getPermission(inst, repo, p.comment.user.login);
@@ -115,4 +120,41 @@ async function handleDispute(
   await d.db.auditLog.create({ data: { actor: `github:${uid}`, action: 'dispute.requested', target: `bounty:${bounty.id}`, data: {} } });
   await reply('Dispute recorded. A human will review this within 48 hours.');
   return 'dispute-requested';
+}
+
+async function handleStatus(
+  d: CommandDeps, p: IssueCommentPayload, reply: (b: string) => Promise<bigint>,
+): Promise<string> {
+  const now = (d.now ?? (() => new Date()))().getTime();
+  const key = `${p.repository.id}:${p.issue.number}`;
+  const last = statusRateLimits.get(key) ?? 0;
+  if (now - last < STATUS_COOLDOWN_MS) {
+    return 'rate-limited';
+  }
+
+  const bounty = await d.db.bounty.findFirst({
+    where: { repoId: BigInt(p.repository.id), issueNumber: p.issue.number },
+    orderBy: { createdAt: 'desc' },
+    include: { prs: { include: { pr: true } }, payouts: { orderBy: { createdAt: 'desc' } } },
+  });
+  if (!bounty) return await reply('There is no bounty on this issue.'), 'rejected:no-bounty';
+
+  statusRateLimits.set(key, now);
+
+  const symbol = (Object.entries(d.tokens).find(([, t]) => t.address === bounty.token)?.[0]) ?? 'USDC';
+  const amount = `${fromBaseUnits(BigInt(bounty.amount.toString()), 7, 2)} ${symbol}`;
+  const prs = bounty.prs.length ? bounty.prs.map((l: { pr: { number: number } }) => `#${l.pr.number}`).join(', ') : 'none';
+  const payoutState = bounty.payouts[0]?.status ?? 'none';
+  const body = [
+    `**Bounty status: ${bounty.status}**`,
+    `- **Amount:** ${amount}`,
+    `- **Deadline:** ${bounty.deadline.toISOString().slice(0, 10)}`,
+    `- **Linked PRs:** ${prs}`,
+    `- **Payout state:** ${payoutState}`,
+    '',
+    `[Bounty details](${d.webUrl}/b/${bounty.id})`,
+  ].join('\n');
+
+  await reply(body);
+  return 'status';
 }
