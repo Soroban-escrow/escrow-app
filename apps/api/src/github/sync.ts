@@ -171,3 +171,22 @@ export async function announcePayout(d: SyncDeps & { explorerTx: (hash: string) 
   await d.db.auditLog.create({ data: { actor: 'system', action: 'payout.announced', target, data: { tx: b.closeTx } } });
   return 'announced';
 }
+
+/**
+ * Processes a coalesced applied batch for a single bounty: refreshes the card once,
+ * and announces the payout only if a released event is present in the batch.
+ */
+export function handleApplied(
+  sync: SyncDeps,
+  explorerTxTemplate: string,
+  log?: (msg: string, extra?: unknown) => void,
+) {
+  return ({ bountyId, kinds, kind }: { bountyId: bigint; kinds?: string[]; kind?: string }) => {
+    const fail = (what: string) => (e: unknown) => log?.(`${what} failed`, e instanceof Error ? e.message : String(e));
+    const list = kinds ?? (kind ? [kind] : []);
+    if (list.includes('released')) {
+      void announcePayout({ ...sync, explorerTx: (h) => explorerTxTemplate.replace('{hash}', encodeURIComponent(h)) }, bountyId).catch(fail('payout announcement'));
+    }
+    void refreshBountyCard(sync, bountyId).catch(fail('card refresh'));
+  };
+}

@@ -5,12 +5,18 @@ import { decodeEvent } from './decode.js';
 
 export const CURSOR_ID = 'bounty_escrow';
 
+export interface AppliedBounty {
+  bountyId: bigint;
+  kinds: string[];
+  kind?: string;
+}
+
 export interface IndexerDeps {
   db: Db;
   server: Pick<rpc.Server, 'getEvents' | 'getLatestLedger'>;
   contractId: string;
-  /** called after each committed batch for events that changed state */
-  onApplied?: (e: { bountyId: bigint; kind: string }) => void;
+  /** called after each committed batch for events that changed state (coalesced per bounty) */
+  onApplied?: (e: AppliedBounty) => void;
   /** called when events were skipped because the RPC no longer retains their ledgers */
   onAlert?: (message: string) => void;
   log?: (msg: string, extra?: unknown) => void;
@@ -91,6 +97,24 @@ async function getEventsPage(
   }
 }
 
+/** Coalesces applied events by bounty id so multiple events in one batch trigger one card refresh. */
+export function coalesceApplied(applied: { bountyId: bigint; kind: string }[]): AppliedBounty[] {
+  const map = new Map<bigint, string[]>();
+  for (const a of applied) {
+    const list = map.get(a.bountyId);
+    if (list) {
+      list.push(a.kind);
+    } else {
+      map.set(a.bountyId, [a.kind]);
+    }
+  }
+  return Array.from(map.entries()).map(([bountyId, kinds]) => ({
+    bountyId,
+    kinds,
+    kind: kinds[kinds.length - 1],
+  }));
+}
+
 /**
  * Catches up to the chain tip. The RPC scans a bounded ledger range per request and may return
  * an empty page with an advanced cursor, so we page until the cursor reaches the latest ledger.
@@ -121,7 +145,7 @@ export async function pollOnce(d: IndexerDeps, startLedgerFallback?: number): Pr
         update: { cursor: res.cursor, ledger },
       });
     });
-    for (const a of applied) d.onApplied?.(a);
+    for (const a of coalesceApplied(applied)) d.onApplied?.(a);
     seen += res.events.length;
     const caughtUp = cursorLedger(res.cursor) >= res.latestLedger - 1 || res.cursor === saved?.cursor;
     if (res.events.length < 200 && caughtUp) break;

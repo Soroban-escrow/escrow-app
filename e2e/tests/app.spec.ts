@@ -73,6 +73,19 @@ test.describe('public pages', () => {
     await expect(page.getByRole('heading', { name: 'Install the GitHub App' })).toBeVisible();
   });
 
+  test('status page renders reachability and indexer lag, linked from footer', async ({ page }) => {
+    await page.goto('/');
+    const statusLink = page.locator('footer').getByRole('link', { name: 'Status' });
+    await expect(statusLink).toBeVisible();
+    await statusLink.click();
+    await expect(page).toHaveURL('/status');
+    await expect(page.getByRole('heading', { name: 'Service Status' })).toBeVisible();
+    await expect(page.getByText('API Reachability')).toBeVisible();
+    await expect(page.getByText('Indexer Lag')).toBeVisible();
+    await expect(page.getByText('Last Updated')).toBeVisible();
+    await noSideScroll(page);
+  });
+
   test('filters by token, status, repository, and combinations', async ({ page }) => {
     await page.goto('/');
     await page.getByLabel('Token').selectOption('CUSDCE2E');
