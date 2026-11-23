@@ -18,13 +18,14 @@ export async function apiGet<T>(path: string): Promise<T | null> {
   }
 }
 
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
+/** Token symbol from the API's token config, then the environment; unknown tokens show a short id. */
 export function symbolFor(token: string, tokens: TokenInfo[] = []): string {
   const configured = tokens.find((item) => item.address === token)?.symbol;
   if (configured) return configured;
   if (process.env.NEXT_PUBLIC_TOKEN_USDC === token) return 'USDC';
   if (process.env.NEXT_PUBLIC_TOKEN_XLM === token) return 'XLM';
   return `${token.slice(0, 4)}…`;
+}
 
 /** Distinguishes an unavailable API from an actual missing resource. */
 export async function apiGetResult<T>(path: string): Promise<{ kind: 'ok'; data: T } | { kind: 'not_found' } | { kind: 'unavailable' }> {
@@ -40,15 +41,6 @@ export function refundWindow(deadline: string, graceMs = 72 * 3600e3, now = Date
   if (ms <= 0) return { open: true, label: 'Refund window is open' };
   const hours = Math.ceil(ms / 3600e3);
   return { open: false, label: `Refund available in ${hours >= 48 ? `${Math.ceil(hours / 24)}d` : `${hours}h`}` };
-}
-
-// Token symbols by contract id come from the environment; unknown tokens show a short id.
-export function symbolFor(token: string): string {
-  const map: Record<string, string> = {};
-  if (process.env.NEXT_PUBLIC_TOKEN_USDC) map[process.env.NEXT_PUBLIC_TOKEN_USDC] = 'USDC';
-  if (process.env.NEXT_PUBLIC_TOKEN_XLM) map[process.env.NEXT_PUBLIC_TOKEN_XLM] = 'XLM';
-  return map[token] ?? `${token.slice(0, 4)}…`;
- fresh-build
 }
 
 export function money(amount: string, token: string, tokens: TokenInfo[] = []): string {

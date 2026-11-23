@@ -1,15 +1,8 @@
 'use client';
 import { use, useCallback, useEffect, useState } from 'react';
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
-import { errorText } from '@/lib/errors';
-import { connect, signTx, WalletUxError } from '@/lib/freighter';
-import { money, type TokenInfo } from '@/lib/api';
-
-import { fromBaseUnits } from '@skillescrow/shared/src/amounts';
-import { explorerTx } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { connect, signTx, WalletUxError } from '@/lib/wallet';
- fresh-build
+import { explorerTx, money, type TokenInfo } from '@/lib/api';
 
 interface Intent { state: 'open' | 'expired' | 'used'; repo: string | null; issueNumber: number; token: string; amount: string; durationDays: number; bountyId: string | null }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
@@ -21,11 +14,8 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
   const [auto, setAuto] = useState(true);
   const [step, setStep] = useState<'idle' | 'signing' | 'waiting'>('idle');
   const [err, setErr] = useState<string | null>(null);
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
-
   const [txHash, setTxHash] = useState<string | null>(null);
- fresh-build
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/intents/${encodeURIComponent(intentId)}`);

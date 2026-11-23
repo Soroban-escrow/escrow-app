@@ -1,10 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
-import { apiGet, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
-
-import { apiGetResult, daysLeft, explorerTx, money } from '@/lib/api';
- fresh-build
+import { CopyButton } from '@/components/CopyButton';
+import { WalletReminder } from '@/components/WalletReminder';
+import { apiGet, apiGetResult, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
 
 interface Review { verdict: string; score: number; flags: string[] }
 interface Detail {
@@ -37,18 +35,13 @@ function progress(b: Detail): number {
 
 export default async function Bounty({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
-  const [b, config] = await Promise.all([
-    apiGet<Detail>(`/bounties/${encodeURIComponent(id)}`),
+  const [response, config] = await Promise.all([
+    apiGetResult<Detail>(`/bounties/${encodeURIComponent(id)}`),
     apiGet<{ tokens: TokenInfo[] }>('/config'),
   ]);
-  if (!b) notFound();
-
-  const response = await apiGetResult<Detail>(`/bounties/${encodeURIComponent(id)}`);
   if (response.kind === 'not_found') notFound();
   if (response.kind === 'unavailable') return <><h1>Temporarily unavailable</h1><p className="muted">The bounty service is unavailable. This is not a missing page; please retry shortly.</p></>;
   const b = response.data;
- fresh-build
   const prs = [...b.prs].sort((x, y) => {
     const rx = x.reviews[0], ry = y.reviews[0];
     return (ORDER.indexOf(rx?.verdict ?? 'needs_human') - ORDER.indexOf(ry?.verdict ?? 'needs_human')) || ((ry?.score ?? 0) - (rx?.score ?? 0));
@@ -79,6 +72,7 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
         ))}
       </ol>
       {NOTICE[b.status] && <p className="notice">{NOTICE[b.status]}</p>}
+      <WalletReminder prAuthors={b.prs.map((p) => p.authorLogin)} />
 
       {b.criteria.length > 0 && (
         <>
@@ -120,7 +114,12 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
           {b.payouts.map((p, i) => (
             <li key={i}>
               <span>PR #{p.prNumber}: {PAYOUT[p.status] ?? p.status}</span>
-              {p.txHash && <a className="mono" href={explorerTx(p.txHash)} rel="noreferrer noopener">tx {p.txHash.slice(0, 8)}… ↗</a>}
+              {p.txHash && (
+                <span>
+                  <a className="mono" href={explorerTx(p.txHash)} rel="noreferrer noopener" title={p.txHash}>tx {p.txHash.slice(0, 8)}… ↗</a>
+                  <CopyButton value={p.txHash} label={`transaction hash for PR #${p.prNumber}`} />
+                </span>
+              )}
             </li>
           ))}
         </ul>

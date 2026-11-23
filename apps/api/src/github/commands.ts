@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { fromBaseUnits, parseCommand } from '@skillescrow/shared';
+import { formatCommandHelp, fromBaseUnits, parseCommand } from '@skillescrow/shared';
 import type { Db } from '../db.js';
 import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
 
@@ -30,12 +30,8 @@ export interface IssueCommentPayload {
 }
 
 const WRITERS = new Set(['admin', 'maintain', 'write']);
-const HELP = [
-  '**SkillEscrow commands**',
-  '- `/bounty <amount> [USDC|XLM] [<days>d]` fund this issue, e.g. `/bounty 50 USDC 14d` (needs write access)',
-  '- `/bounty dispute <reason>` flag a problem on a bountied issue',
-  '- `/bounty help`',
-].join('\n');
+// Rendered from the shared command metadata, like the docs page (#135).
+const HELP = formatCommandHelp();
 
 /** Returns a short outcome string for logs/tests. Never throws on user error, only on infrastructure failure. */
 export async function handleIssueComment(d: CommandDeps, p: IssueCommentPayload): Promise<string> {
