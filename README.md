@@ -420,6 +420,13 @@ All responses use one error shape: `{ "error": { "code": "…", "message": "…"
 Mutations need a session cookie **and** an `X-CSRF-Token` header. Rate limits are per signed-in user,
 falling back to per IP.
 
+**Private repositories.** Public reads (`/bounties`, `/bounties/:id`, `/filters`, `/users/:login`)
+*exclude* bounties on private repositories rather than redacting their fields. A private bounty
+detail therefore returns the same 404 as a missing bounty, and its repo, title, criteria and token
+never appear in lists or filters. Exclusion was chosen over redaction because it removes any chance
+of leaking sensitive metadata. The maintainer still sees those bounties on the session-only
+`/me/funded` and `/me/earnings`.
+
 <details>
 <summary><b>Endpoint reference</b></summary>
 

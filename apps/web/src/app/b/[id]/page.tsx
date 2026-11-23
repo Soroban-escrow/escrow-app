@@ -1,10 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
-import { apiGet, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
-
-import { apiGetResult, daysLeft, explorerTx, money } from '@/lib/api';
- fresh-build
+import { apiGet, apiGetResult, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
+import { Deadline } from './deadline';
 
 interface Review { verdict: string; score: number; flags: string[] }
 interface Detail {
@@ -37,24 +34,18 @@ function progress(b: Detail): number {
 
 export default async function Bounty({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
-  const [b, config] = await Promise.all([
-    apiGet<Detail>(`/bounties/${encodeURIComponent(id)}`),
+  const [response, config] = await Promise.all([
+    apiGetResult<Detail>(`/bounties/${encodeURIComponent(id)}`),
     apiGet<{ tokens: TokenInfo[] }>('/config'),
   ]);
-  if (!b) notFound();
-
-  const response = await apiGetResult<Detail>(`/bounties/${encodeURIComponent(id)}`);
   if (response.kind === 'not_found') notFound();
   if (response.kind === 'unavailable') return <><h1>Temporarily unavailable</h1><p className="muted">The bounty service is unavailable. This is not a missing page; please retry shortly.</p></>;
   const b = response.data;
- fresh-build
   const prs = [...b.prs].sort((x, y) => {
     const rx = x.reviews[0], ry = y.reviews[0];
     return (ORDER.indexOf(rx?.verdict ?? 'needs_human') - ORDER.indexOf(ry?.verdict ?? 'needs_human')) || ((ry?.score ?? 0) - (rx?.score ?? 0));
   });
   const done = progress(b);
-  const deadline = new Date(b.deadline);
 
   return (
     <>
@@ -67,7 +58,7 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
       </div>
 
       <dl className="facts">
-        <div><dt>Deadline</dt><dd>{deadline.toISOString().slice(0, 10)}</dd></div>
+        <div><dt>Deadline</dt><dd><Deadline iso={b.deadline} /></dd></div>
         <div><dt>Time left</dt><dd>{daysLeft(b.deadline)}</dd></div>
         <div><dt>Release on merge</dt><dd>{b.relayerAllowed ? 'automatic' : 'maintainer signs'}</dd></div>
         <div><dt>Fee</dt><dd>{b.feeBps / 100}% of payout</dd></div>

@@ -277,6 +277,7 @@ test.describe('scripted Freighter signed flows', () => {
   });
 
   for (const action of ['release', 'refund'] as const) {
+    const label = action === 'release' ? 'Release' : 'Refund';
     test(`signs and submits a maintainer ${action} with CSRF protection`, async ({ page }) => {
       await installFakeWallet(page); await mockConfig(page);
       await page.route('**/api/auth/me', (r) => r.fulfill({ json: fakeMe({ wallet: FAKE_ADDRESS }) }));
@@ -284,11 +285,37 @@ test.describe('scripted Freighter signed flows', () => {
       let signedXdr: unknown, csrfHeader: string | undefined;
       await page.route(`**/api/bounties/1/${action}/build`, (r) => r.fulfill({ json: { xdr: `unsigned-${action}-xdr` } }));
       await page.route('**/api/tx/submit', (r) => { signedXdr = r.request().postDataJSON().xdr; csrfHeader = r.request().headers()['x-csrf-token']; return r.fulfill({ json: { hash: 'tx' } }); });
-      await page.goto('/me'); await page.getByRole('button', { name: action === 'release' ? 'Release' : 'Refund' }).click();
-      await expect(page.getByRole('status')).toContainText(action === 'release' ? 'Release submitted.' : 'Refund submitted.');
+      await page.goto('/me');
+      await page.getByRole('button', { name: label }).click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toContainText('50.00 USDC');
+      await expect(dialog).toContainText(action === 'release' ? 'to the winning PR author' : 'refund');
+      await expect(dialog).toContainText('irreversible');
+      await dialog.getByRole('button', { name: `Confirm ${label}` }).click();
+      await expect(page.getByRole('status')).toContainText(`${label} submitted.`);
       expect(signedXdr).toBe(`signed:unsigned-${action}-xdr`); expect(csrfHeader).toBe('csrf-scripted');
     });
   }
+
+  test('confirmation dialog traps focus and cancels with Escape without signing', async ({ page }) => {
+    await installFakeWallet(page); await mockConfig(page);
+    await page.route('**/api/auth/me', (r) => r.fulfill({ json: fakeMe({ wallet: FAKE_ADDRESS }) }));
+    await page.route('**/api/me/funded', (r) => r.fulfill({ json: [{ id: '1', issueTitle: 'Bounty one', amount: '500000000', token: 'CUSDCE2E', status: 'OPEN', deadline: new Date().toISOString(), winnerAddress: 'GWINNER' }] }));
+    let built = false;
+    await page.route('**/api/bounties/1/release/build', (r) => { built = true; return r.fulfill({ json: { xdr: 'x' } }); });
+    await page.goto('/me');
+    await page.getByRole('button', { name: 'Release' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('GWINNER');
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByRole('button', { name: 'Confirm Release' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    expect(built).toBe(false);
+  });
 
   test('opens a dispute on chain using the scripted arbiter wallet', async ({ page }) => {
     await installFakeWallet(page); await mockConfig(page);
