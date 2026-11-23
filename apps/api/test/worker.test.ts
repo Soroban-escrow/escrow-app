@@ -289,7 +289,7 @@ describe('queue round trip (real Redis)', () => {
       for (let i = 0; i < 50 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
       await new Promise((r) => setTimeout(r, 300));
       expect(seen).toHaveLength(1);
-      expect(seen[0]).toMatchObject({ id, event: 'issues', payload: { a: 1 } });
+      expect(seen[0]).toMatchObject({ id, deliveryId: id, event: 'issues', payload: { a: 1 } });
     } finally { await w.close(); await prod.close(); }
   });
 });

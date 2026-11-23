@@ -1,9 +1,11 @@
-import { Queue, Worker } from 'bullmq';
+import { Queue, UnrecoverableError, Worker } from 'bullmq';
+import { isPermanentModelError } from '../ai/anthropic.js';
 import { connection } from './queue.js';
 
 export const REVIEWS = 'ai-review';
 export interface ReviewJob { prId: string; force: boolean }
 export const DEBOUNCE_MS = 5 * 60_000;
+const RETRY = { attempts: 3, backoff: { type: 'exponential', delay: 10_000 } } as const;
 
 /**
  * Producer: schedules a review after a quiet period. A newer push replaces a review that is still
@@ -21,19 +23,30 @@ export function reviewProducer(redisUrl: string) {
         if (state === 'delayed' || state === 'waiting') await existing.remove();
         else if (state === 'active') {
           // the running review used the earlier head; queue the new one right behind it
-          await queue.add('review', { prId: String(prId), force }, { jobId: `${id}-next`, delay: delayMs, removeOnComplete: true, removeOnFail: 100 });
+          await queue.add('review', { prId: String(prId), force }, { jobId: `${id}-next`, delay: delayMs, ...RETRY, removeOnComplete: true, removeOnFail: 100 });
           return;
         }
       }
-      await queue.add('review', { prId: String(prId), force }, { jobId: id, delay: delayMs, attempts: 3, backoff: { type: 'exponential', delay: 10_000 }, removeOnComplete: true, removeOnFail: 100 });
+      await queue.add('review', { prId: String(prId), force }, { jobId: id, delay: delayMs, ...RETRY, removeOnComplete: true, removeOnFail: 100 });
     },
     close: async () => { await queue.close(); conn.disconnect(); },
   };
 }
 
-export function reviewWorker(redisUrl: string, handle: (prId: bigint, force: boolean) => Promise<unknown>) {
+export function reviewWorker(redisUrl: string, handle: (prId: bigint, force: boolean) => Promise<unknown>, log: (message: string, extra?: unknown) => void = (message, extra) => console.error(message, extra ?? '')) {
   const conn = connection(redisUrl);
   // concurrency 1: reviews are paced by the model and the per-repo daily cap anyway
-  const w = new Worker<ReviewJob>(REVIEWS, (job) => handle(BigInt(job.data.prId), job.data.force), { connection: conn, concurrency: 1 });
+  const w = new Worker<ReviewJob>(REVIEWS, async (job) => {
+    try {
+      await handle(BigInt(job.data.prId), job.data.force);
+    } catch (e) {
+      if (isPermanentModelError(e)) {
+        const error = e instanceof Error ? e.message : String(e);
+        log('review failed permanently', { pr: job.data.prId, error });
+        throw new UnrecoverableError(error);
+      }
+      throw e;
+    }
+  }, { connection: conn, concurrency: 1 });
   return { worker: w, close: async () => { await w.close(); conn.disconnect(); } };
 }
