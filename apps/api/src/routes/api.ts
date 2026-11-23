@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../auth/wallet.js';
 import type { IssueCommenter } from '../ops/reminders.js';
-import { COOKIE, csrfToken, csrfValid, destroySession, getSessionUser } from '../auth/session.js';
+import { COOKIE, csrfToken, csrfValid, destroySession, destroyAllSessions, getSessionUser, renewSessionIfNeeded } from '../auth/session.js';
 import { clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
 import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
@@ -13,6 +13,8 @@ import { scheduleWalletFollowUp, type RetryOptions } from './wallet-followup.js'
 export interface ApiDeps {
   db: Db;
   csrfSecret: string;
+  /** GitHub user ids with admin rights, derived from current config (not the login-time snapshot). */
+  adminGithubIds?: bigint[];
   /** called after a wallet is linked (continues pending payouts) */
   onWalletLinked?: (githubId: bigint) => Promise<unknown>;
   /** retry policy for the background payout follow-up after a wallet link */
@@ -37,6 +39,7 @@ type Authed = FastifyRequest & { sessionId?: string; user?: NonNullable<Awaited<
 export function registerApi(app: FastifyInstance, d: ApiDeps) {
   const cookies = (req: FastifyRequest) =>
     Object.fromEntries((req.headers.cookie ?? '').split(';').map((c) => c.trim().split('=') as [string, string]).filter(([k]) => k));
+  const secure = d.login?.callbackUrl.startsWith('https://') ?? false;
 
   async function requireUser(req: Authed, reply: FastifyReply, mutating: boolean) {
     const sid = cookies(req)[COOKIE];
@@ -45,6 +48,9 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     if (mutating && !csrfValid(d.csrfSecret, sid, req.headers['x-csrf-token'])) return err(reply, 403, 'csrf', 'missing or invalid CSRF token');
     req.user = user;
     req.sessionId = sid;
+    // sliding renewal: extend the session when less than half its lifetime remains
+    const newMaxAge = await renewSessionIfNeeded(d.db, sid);
+    if (newMaxAge) reply.header('set-cookie', sessionCookie(sid, newMaxAge, secure));
     return undefined;
   }
   const authed = (mutating: boolean) => ({
@@ -54,7 +60,6 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   if (d.login) {
     const login = d.login;
-    const secure = login.callbackUrl.startsWith('https://');
     app.get('/auth/login', async (req, reply) => {
       const { url, cookie } = startLogin(login, (req.query as { next?: string }).next);
       return reply.header('set-cookie', stateCookie(cookie, secure)).redirect(url);
@@ -72,11 +77,17 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   app.get('/auth/me', authed(false), async (req) => {
     const u = (req as Authed).user!;
-    return { id: u.id, login: u.githubLogin, avatarUrl: u.avatarUrl, wallet: u.wallet, isAdmin: u.isAdmin, csrfToken: csrfToken(d.csrfSecret, (req as Authed).sessionId!) };
+    const isAdmin = d.adminGithubIds ? d.adminGithubIds.includes(u.githubId) : u.isAdmin;
+    return { id: u.id, login: u.githubLogin, avatarUrl: u.avatarUrl, wallet: u.wallet, isAdmin, csrfToken: csrfToken(d.csrfSecret, (req as Authed).sessionId!) };
   });
 
   app.post('/auth/logout', authed(true), async (req, reply) => {
     await destroySession(d.db, (req as Authed).sessionId!);
+    return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
+  });
+
+  app.post('/auth/logout-all', authed(true), async (req, reply) => {
+    await destroyAllSessions(d.db, (req as Authed).user!.id);
     return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
   });
 
@@ -119,7 +130,7 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   if (d.chain) {
     registerFunding(app, { db: d.db, chain: d.chain }, authed);
-    registerAdmin(app, { db: d.db, chain: d.chain, commenter: d.commenter }, authed);
+    registerAdmin(app, { db: d.db, chain: d.chain, commenter: d.commenter, adminGithubIds: d.adminGithubIds ?? [] }, authed);
   }
 
   // ---- public reads ----

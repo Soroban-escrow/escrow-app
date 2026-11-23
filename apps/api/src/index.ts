@@ -31,7 +31,9 @@ const payoutDeps = {
 };
 
 const app = await buildServer(cfg, store, {
-  db, csrfSecret: cfg.CSRF_SECRET, onWalletLinked: (githubId) => onWalletLinked(payoutDeps, githubId),
+  db, csrfSecret: cfg.CSRF_SECRET,
+  adminGithubIds: (cfg.ADMIN_GITHUB_IDS ?? '').split(',').filter(Boolean).map(BigInt),
+  onWalletLinked: (githubId) => onWalletLinked(payoutDeps, githubId),
   commenter: gh ? githubIssueCommenter({ db, gh }) : { comment: async () => { throw new Error('GitHub App is not configured'); } },
   ...(cfg.GITHUB_CLIENT_ID && cfg.GITHUB_CLIENT_SECRET ? { login: { db, clientId: cfg.GITHUB_CLIENT_ID, clientSecret: cfg.GITHUB_CLIENT_SECRET, callbackUrl: `${cfg.API_PUBLIC_URL}/auth/callback`, webUrl: cfg.WEB_PUBLIC_URL, secret: cfg.SESSION_SECRET, adminGithubIds: (cfg.ADMIN_GITHUB_IDS ?? '').split(',').filter(Boolean).map(BigInt) } } : {}),
   chain: { ...chain, getBounty: async (id) => ({ status: (await chain.getBounty(id)).status.tag }) },

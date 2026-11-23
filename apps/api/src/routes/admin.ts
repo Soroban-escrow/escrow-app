@@ -17,6 +17,8 @@ export interface AdminDeps {
   /** Posts an admin decision back to the GitHub issue. Failures are logged and retried by the worker. */
   commenter?: IssueCommenter;
   log?: (msg: string, extra?: unknown) => void;
+  /** GitHub user ids with admin rights, derived from current config on every request. */
+  adminGithubIds: bigint[];
 }
 
 type Authed = FastifyRequest & { user?: { id: string; githubId: bigint; isAdmin: boolean } };
@@ -27,7 +29,12 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
   const now = () => (d.now ?? (() => new Date()))();
   /** Admin rights are checked server-side on every route; the flag follows config, not the client. */
   const adminOnly = (mutating: boolean) => (mutating ? { ...authed(mutating), ...mutationLimit(30) } : authed(mutating));
-  const guard = async (req: FastifyRequest, reply: FastifyReply) => ((req as Authed).user?.isAdmin ? true : (void err(reply, 403, 'forbidden', 'admins only'), false));
+  const guard = async (req: FastifyRequest, reply: FastifyReply) => {
+    const githubId = (req as Authed).user?.githubId;
+    if (githubId && d.adminGithubIds.includes(githubId)) return true;
+    err(reply, 403, 'forbidden', 'admins only');
+    return false;
+  };
   const audit = (req: FastifyRequest, action: string, target: string, data: object) =>
     d.db.auditLog.create({ data: { actor: `admin:${(req as Authed).user!.githubId}`, action, target, data } });
 
