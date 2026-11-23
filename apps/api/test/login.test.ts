@@ -57,6 +57,23 @@ describe('login flow', () => {
     await finishLogin(d2, { code: 'c', state: new URL(url).searchParams.get('state')! }, cookie);
     expect((await db.user.findUniqueOrThrow({ where: { githubId: 55n } })).isAdmin).toBe(false);
   });
+  it('frees a login held by another GitHub id when the account is claimed', async () => {
+    await db.user.create({ data: { githubId: 1n, githubLogin: 'maint' } });
+    ghUser = { id: 55, login: 'MAINT' }; // GitHub logins are case-insensitive
+    const d = deps();
+    const { url, cookie } = startLogin(d, '/me');
+    await finishLogin(d, { code: 'c', state: new URL(url).searchParams.get('state')! }, cookie);
+    expect((await db.user.findUniqueOrThrow({ where: { githubId: 1n } })).githubLogin).toBe('@stale-1');
+    expect((await db.user.findUniqueOrThrow({ where: { githubId: 55n } })).githubLogin).toBe('MAINT');
+  });
+  it('has a case-insensitive unique index on githubLogin', async () => {
+    const idx = await db.$queryRaw<Array<{ indexname: string }>>`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = current_schema() AND tablename = 'User'
+        AND indexname = 'User_githubLogin_lower_key' AND indexdef ILIKE '%lower(%'
+    `;
+    expect(idx).toHaveLength(1);
+  });
   it('rejects a missing cookie, a wrong state, a forged cookie and an expired one', async () => {
     const d = deps();
     const { url, cookie } = startLogin(d, '/me');

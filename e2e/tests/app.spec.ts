@@ -169,7 +169,7 @@ async function freshDispute() {
   const db = new pg.Client({ connectionString: E2E_DB });
   await db.connect();
   await db.query(`DELETE FROM "Dispute"`);
-  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','requested',now()-interval '40 hours',now())`);
+  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','REQUESTED',now()-interval '40 hours',now())`);
   await db.end();
 }
 
@@ -195,7 +195,7 @@ test.describe('admin', () => {
 });
 
 const fakeMe = (over: object = {}) => ({ id: 'u55', login: 'maint', wallet: null, isAdmin: false, csrfToken: 'csrf-scripted', ...over });
-const fakeDispute = (status: 'requested' | 'opened_onchain') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
+const fakeDispute = (status: 'REQUESTED' | 'OPENED_ONCHAIN') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
 const fakeStatus = { indexerLedger: 1, failedPayouts: 0, waitingPayouts: 0, openDisputes: 1 };
 
 test.describe('scripted Freighter signed flows', () => {

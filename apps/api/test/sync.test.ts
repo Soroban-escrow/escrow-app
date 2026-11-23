@@ -1,3 +1,4 @@
+import { PullRequestState } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
 import { githubNotifier, refreshBountyCard, type GithubApi } from '../src/github/sync.js';
@@ -85,7 +86,7 @@ describe('announcePayout', () => {
   const d = () => ({ ...deps(), explorerTx });
   beforeEach(async () => {
     await db.$executeRawUnsafe('TRUNCATE "AuditLog","PullRequestBounty","PullRequest" CASCADE');
-    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 9n, authorLogin: 'contrib', headSha: 'a', state: 'merged' } });
+    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 9n, authorLogin: 'contrib', headSha: 'a', state: PullRequestState.MERGED } });
     await db.pullRequestBounty.create({ data: { prId: 5n, bountyId: 1n } });
     await db.payout.create({ data: { bountyId: 1n, prNumber: 3, winnerGithubId: 9n, winnerAddress: 'GWINNERADDRESS1234567890', status: 'CONFIRMED', idempotencyKey: 'release:1' } });
   });

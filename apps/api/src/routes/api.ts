@@ -1,5 +1,6 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { net } from '@skillescrow/shared';
 import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../auth/wallet.js';
 import type { IssueCommenter } from '../ops/reminders.js';
 import { COOKIE, csrfToken, csrfValid, destroySession, destroyAllSessions, getSessionUser, renewSessionIfNeeded } from '../auth/session.js';
@@ -9,6 +10,7 @@ import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
 import { registerAdmin, type AdminChain } from './admin.js';
 import { registerFunding, type FundingChain } from './funding.js';
+import { err, ser, type Authed } from './http.js';
 import { scheduleWalletFollowUp, type RetryOptions } from './wallet-followup.js';
 
 export interface ApiDeps {
@@ -31,11 +33,6 @@ export interface ApiDeps {
   /** posts admin dispute decisions back to the issue; failures are retried by the worker */
   commenter?: IssueCommenter;
 }
-
-const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
-const ser = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? x.toString() : x)));
-
-type Authed = FastifyRequest & { sessionId?: string; user?: NonNullable<Awaited<ReturnType<typeof getSessionUser>>> };
 
 export function registerApi(app: FastifyInstance, d: ApiDeps) {
   const cookies = (req: FastifyRequest) => parseCookies(req.headers.cookie);
@@ -217,7 +214,19 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     const paid = await d.db.payout.findMany({
       where: { winnerGithubId: u.githubId, status: 'CONFIRMED' },
       include: { bounty: { select: { id: true, token: true, amount: true, feeBps: true, issueTitle: true, issueUrl: true } } },
+      orderBy: { createdAt: 'desc' },
     });
-    return ser({ login: u.githubLogin, avatarUrl: u.avatarUrl, paid: paid.map((p) => ({ bounty: p.bounty, txHash: p.txHash })) });
+    const earned = new Map<string, bigint>();
+    for (const p of paid) {
+      earned.set(p.bounty.token, (earned.get(p.bounty.token) ?? 0n) + net(BigInt(p.bounty.amount), p.bounty.feeBps));
+    }
+    return ser({
+      login: u.githubLogin,
+      avatarUrl: u.avatarUrl,
+      paid: paid.map((p) => ({ bounty: p.bounty, txHash: p.txHash })),
+      earnedByToken: [...earned].map(([token, amount]) => ({ token, amount })),
+      paidCount: paid.length,
+      firstPayoutAt: paid.length ? paid.reduce((first, p) => p.createdAt < first ? p.createdAt : first, paid[0]!.createdAt) : null,
+    });
   });
 }

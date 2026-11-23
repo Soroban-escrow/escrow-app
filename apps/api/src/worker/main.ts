@@ -1,3 +1,4 @@
+import pino from 'pino';
 import { Redis } from 'ioredis';
 import { loadConfig, loadDotEnv } from '../config.js';
 import { createChain } from '../chain/client.js';
@@ -20,7 +21,8 @@ loadDotEnv();
 const cfg = loadConfig();
 const db = createDb(cfg.DATABASE_URL);
 const chain = createChain({ rpcUrl: cfg.STELLAR_RPC_URL, networkPassphrase: cfg.STELLAR_NETWORK_PASSPHRASE, contractId: cfg.BOUNTY_CONTRACT_ID });
-const log = (msg: string, extra?: unknown) => console.log(JSON.stringify({ msg, extra }));
+const logger = pino({ level: cfg.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers.cookie'] });
+const log = (msg: string, extra?: unknown) => logger.info({ extra }, msg);
 
 // Without GitHub App credentials the worker still runs, but jobs that need GitHub fail loudly and the
 // queue retries them, rather than silently doing nothing.

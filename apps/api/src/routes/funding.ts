@@ -1,8 +1,8 @@
 import { StrKey } from '@stellar/stellar-sdk';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { contractErrorName } from '../chain/errors.js';
 import type { Db } from '../db.js';
+import { chainError, err, type Authed } from './http.js';
 import { mutationLimit } from './limits.js';
 
 /** What the funding routes need from the chain; the real one is createChain(). */
@@ -19,16 +19,6 @@ export interface FundingDeps {
   chain: FundingChain;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
-}
-
-type Authed = FastifyRequest & { user?: { id: string; githubId: bigint; wallet: string | null } };
-const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
-
-/** Turns a simulation failure into a stable, user-facing error (contract error name when we can find one). */
-function chainError(r: FastifyReply, e: unknown) {
-  const msg = e instanceof Error ? e.message : String(e);
-  const name = contractErrorName(msg);
-  return err(r, 422, name ? `contract_${name}` : 'chain_error', name ? `The contract rejected this: ${name}` : 'The network rejected this request.');
 }
 
 export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (mutating: boolean) => object) {

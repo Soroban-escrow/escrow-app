@@ -1,9 +1,10 @@
+import { DisputeStatus } from '@prisma/client';
 import { StrKey } from '@stellar/stellar-sdk';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { contractErrorName } from '../chain/errors.js';
 import type { Db } from '../db.js';
 import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
+import { chainError, err, ser, type Authed } from './http.js';
 import { mutationLimit } from './limits.js';
 
 export interface AdminChain {
@@ -21,10 +22,6 @@ export interface AdminDeps {
   adminGithubIds: bigint[];
 }
 
-type Authed = FastifyRequest & { user?: { id: string; githubId: bigint; isAdmin: boolean } };
-const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
-const ser = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? x.toString() : x)));
-
 export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutating: boolean) => object) {
   const now = () => (d.now ?? (() => new Date()))();
   /** Admin rights are checked server-side on every route; the flag follows config, not the client. */
@@ -41,7 +38,7 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
   app.get('/admin/disputes', adminOnly(false), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
     const rows = await d.db.dispute.findMany({
-      where: { status: { in: ['requested', 'opened_onchain'] } }, orderBy: { createdAt: 'asc' },
+      where: { status: { in: [DisputeStatus.REQUESTED, DisputeStatus.OPENED_ONCHAIN] } }, orderBy: { createdAt: 'asc' },
       include: { bounty: { include: { prs: { include: { pr: { include: { reviews: { take: 1, orderBy: { createdAt: 'desc' } } } } } }, payouts: true, repo: { select: { fullName: true } } } } },
     });
     return ser(rows.map((r) => ({ ...r, bounty: { ...r.bounty, prs: r.bounty.prs.map((l) => l.pr) }, overdue: now().getTime() - r.createdAt.getTime() > DISPUTE_REVIEW_HOURS * 3600e3 })));
@@ -54,23 +51,18 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
     const x = await d.db.dispute.findUnique({ where: { id } });
     return x ?? void err(reply, 404, 'not_found', 'dispute not found');
   }
-  const mapErr = (reply: FastifyReply, e: unknown) => {
-    const n = contractErrorName(e instanceof Error ? e.message : '');
-    return err(reply, 422, n ? `contract_${n}` : 'chain_error', n ? `The contract rejected this: ${n}` : 'The network rejected this request.');
-  };
-
   const addr = z.object({ arbiterAddress: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a)) });
   app.post('/admin/disputes/:id/open-onchain', adminOnly(true), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
     const x = await load(req, reply); if (!x) return reply;
     const b = addr.safeParse(req.body);
     if (!b.success) return err(reply, 400, 'bad_request', 'a valid arbiterAddress is required');
-    if (x.status !== 'requested') return err(reply, 409, 'wrong_state', `dispute is ${x.status}`);
+    if (x.status !== DisputeStatus.REQUESTED) return err(reply, 409, 'wrong_state', `dispute is ${x.status}`);
     try {
       const xdr = await d.chain.buildOpenDisputeTx(b.data.arbiterAddress, x.bountyId);
       await audit(req, 'dispute.open_onchain.build', `dispute:${x.id}`, { bounty: String(x.bountyId) });
       return { xdr };
-    } catch (e) { return mapErr(reply, e); }
+    } catch (e) { return chainError(reply, e instanceof Error ? e : new Error('')); }
   });
 
   const resolve = z.object({
@@ -85,7 +77,7 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
     const b = resolve.safeParse(req.body);
     if (!b.success) return err(reply, 400, 'bad_request', 'arbiterAddress, winnerBps (0-10000) and, when bps > 0, a winner are required');
     if (b.data.winnerBps > 0 && !b.data.winner) return err(reply, 400, 'winner_required', 'a winner address is required when winnerBps > 0');
-    if (x.status !== 'opened_onchain') return err(reply, 409, 'wrong_state', `dispute is ${x.status}; open it on chain first`);
+    if (x.status !== DisputeStatus.OPENED_ONCHAIN) return err(reply, 409, 'wrong_state', `dispute is ${x.status}; open it on chain first`);
     try {
       const xdr = await d.chain.buildResolveTx(b.data.arbiterAddress, x.bountyId, b.data.winnerBps > 0 ? b.data.winner : undefined, b.data.winnerBps);
       // only a proposal: resolutionNote is written by the indexer once the matching resolve lands on chain
@@ -95,7 +87,7 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
       });
       await audit(req, 'dispute.resolve.build', `dispute:${x.id}`, { winner: b.data.winner ?? null, bps: b.data.winnerBps, note: b.data.note });
       return { xdr };
-    } catch (e) { return mapErr(reply, e); }
+    } catch (e) { return chainError(reply, e instanceof Error ? e : new Error('')); }
   });
 
   app.post('/admin/disputes/:id/reject', adminOnly(true), async (req, reply) => {
@@ -103,8 +95,8 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
     const x = await load(req, reply); if (!x) return reply;
     const note = z.object({ note: z.string().min(1).max(1000) }).safeParse(req.body);
     if (!note.success) return err(reply, 400, 'bad_request', 'a note is required');
-    if (x.status !== 'requested') return err(reply, 409, 'wrong_state', `dispute is ${x.status}`);
-    await d.db.dispute.update({ where: { id: x.id }, data: { status: 'rejected', resolutionNote: note.data.note } });
+    if (x.status !== DisputeStatus.REQUESTED) return err(reply, 409, 'wrong_state', `dispute is ${x.status}`);
+    await d.db.dispute.update({ where: { id: x.id }, data: { status: DisputeStatus.REJECTED, resolutionNote: note.data.note } });
     await audit(req, 'dispute.rejected', `dispute:${x.id}`, { note: note.data.note });
     if (d.commenter) {
       try {
@@ -139,7 +131,7 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
       d.db.indexerCursor.findUnique({ where: { id: 'bounty_escrow' } }),
       d.db.payout.count({ where: { status: 'FAILED' } }),
       d.db.payout.count({ where: { status: { in: ['PENDING_WALLET', 'AWAITING_MAINTAINER'] } } }),
-      d.db.dispute.count({ where: { status: { in: ['requested', 'opened_onchain'] } } }),
+      d.db.dispute.count({ where: { status: { in: [DisputeStatus.REQUESTED, DisputeStatus.OPENED_ONCHAIN] } } }),
     ]);
     return { indexerLedger: cursor?.ledger ?? null, indexerUpdatedAt: cursor?.updatedAt ?? null, failedPayouts: failed, waitingPayouts: pending, openDisputes: disputes };
   });

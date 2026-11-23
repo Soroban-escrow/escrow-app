@@ -71,10 +71,22 @@ export async function finishLogin(d: LoginDeps, q: { code?: string; state?: stri
 
   const githubId = BigInt(u.id);
   // the admin flag follows config on every login, not what the browser says
-  const user = await d.db.user.upsert({
-    where: { githubId },
-    create: { githubId, githubLogin: u.login, avatarUrl: u.avatar_url ?? null, isAdmin: d.adminGithubIds.includes(githubId) },
-    update: { githubLogin: u.login, avatarUrl: u.avatar_url ?? null, isAdmin: d.adminGithubIds.includes(githubId) },
+  const user = await d.db.$transaction(async (tx) => {
+    // A renamed GitHub account frees its old login, which another account can then claim.
+    // Retire the stale row's login first so the unique index does not reject this login.
+    const stale = await tx.user.findMany({
+      where: { githubId: { not: githubId }, githubLogin: { equals: u.login, mode: 'insensitive' } },
+      select: { id: true, githubId: true },
+    });
+    for (const s of stale) {
+      // '@' is not allowed in a GitHub login, so these tombstones cannot clash with a real one.
+      await tx.user.update({ where: { id: s.id }, data: { githubLogin: `@stale-${s.githubId}` } });
+    }
+    return tx.user.upsert({
+      where: { githubId },
+      create: { githubId, githubLogin: u.login, avatarUrl: u.avatar_url ?? null, isAdmin: d.adminGithubIds.includes(githubId) },
+      update: { githubLogin: u.login, avatarUrl: u.avatar_url ?? null, isAdmin: d.adminGithubIds.includes(githubId) },
+    });
   });
   const session = await createSession(d.db, user.id, new Date((d.now ?? Date.now)()));
   return { sessionId: session.id, maxAgeSeconds: session.maxAgeSeconds, redirect: `${d.webUrl}${safeNext(st.next)}` };

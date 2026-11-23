@@ -9,6 +9,7 @@ datasource db {
 model User {
   id             String    @id @default(cuid())
   githubId       BigInt    @unique
+  /// Case-insensitive uniqueness is enforced by the raw SQL index "User_githubLogin_lower_key".
   githubLogin    String
   avatarUrl      String?
   wallet         String?   @unique
@@ -130,13 +131,19 @@ model Bounty {
   @@index([maintainer])
 }
 
+enum PullRequestState {
+  OPEN
+  CLOSED
+  MERGED
+}
+
 model PullRequest {
-  id             BigInt    @id
+  id             BigInt           @id
   number         Int
   authorGithubId BigInt
   authorLogin    String
   headSha        String
-  state          String
+  state          PullRequestState
   mergedAt       DateTime?
   diffHash       String?
   reviews        AiReview[]
@@ -201,15 +208,22 @@ model Payout {
   @@index([winnerGithubId])
 }
 
+enum DisputeStatus {
+  REQUESTED
+  OPENED_ONCHAIN
+  REJECTED
+  RESOLVED
+}
+
 model Dispute {
-  id               String   @id @default(cuid())
+  id               String        @id @default(cuid())
   bountyId         BigInt
-  bounty           Bounty   @relation(fields: [bountyId], references: [id])
+  bounty           Bounty        @relation(fields: [bountyId], references: [id])
   openedByGithubId BigInt
   openedByLogin    String?
   reason           String
   evidence         Json
-  status           String
+  status           DisputeStatus
   resolutionNote   String?
   /// The admin's proposed resolution, stored when the unsigned XDR is built. It only becomes
   /// resolutionNote once the indexer observes an on-chain resolve with the same winner and split.

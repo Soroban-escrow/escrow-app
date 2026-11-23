@@ -25,7 +25,7 @@ export default async function setup() {
     (7,100,13,'Resolved bounty','https://github.com/acme/widgets/issues/13','{}','GMAINT','CUSDCE2E',100000000,300,now()+interval '4 days',true,'RESOLVED','tx',now(),now())`);
   await db.query(`INSERT INTO "User"(id,"githubId","githubLogin","isAdmin","wallet","updatedAt") VALUES ('upaiduser1',90,'paiduser',false,'GPAID1ADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',now()),('upaiduser2',91,'multitoken',false,'GPAID2ADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',now()),('unopaids',92,'nopayments',false,null,now())`);
   await db.query(`INSERT INTO "Payout"(id,"bountyId","prId","prNumber","contributorGithubId","contributorAddress",amount,status,"txHash","createdAt","updatedAt") VALUES ('payout1',4,500,3,90,'GPAID1ADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA','95000000','CONFIRMED','tx1confirmedaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now(),now()),('payout2',5,500,3,91,'GPAID2ADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA','120000000','CONFIRMED','tx2confirmedbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',now(),now()),('payout3',6,500,3,91,'GPAID2ADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA','30000000','CONFIRMED','tx3confirmedccccccccccccccccccccccccccccccccccccccc',now(),now())`);
-  await db.query(`INSERT INTO "PullRequest"(id,number,"authorGithubId","authorLogin","headSha",state) VALUES (500,3,77,'contrib','abc','open'),(501,4,78,'second','def','open')`);
+  await db.query(`INSERT INTO "PullRequest"(id,number,"authorGithubId","authorLogin","headSha",state) VALUES (500,3,77,'contrib','abc','OPEN'),(501,4,78,'second','def','OPEN')`);
   await db.query(`INSERT INTO "PullRequestBounty"("prId","bountyId") VALUES (500,1),(501,1),(500,2)`);
   await db.query(`INSERT INTO "AiReview"(id,"prId","headSha",model,verdict,score,result,flags,"inputTokens","outputTokens") VALUES ('r1',500,'abc','m','likely_meets',88,'{}','{}',1,1),('r2',501,'def','m','partially_meets',55,'{}','{}',1,1)`);
   const mkUser = async (githubId: number, login: string, isAdmin: boolean) => {
@@ -40,7 +40,7 @@ export default async function setup() {
   await mkIntent('intent-open-0000001', '12', null);
   await mkIntent('intent-expired-00001', '-1', null);
   await mkIntent('intent-used-0000001', '12', new Date().toISOString());
-  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','requested',now()-interval '40 hours',now())`);
+  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','REQUESTED',now()-interval '40 hours',now())`);
   await db.end();
   writeFileSync(new URL('./.sessions.json', import.meta.url), JSON.stringify(sessions));
 }

@@ -105,6 +105,18 @@ describe('calls', () => {
     expect(g.calls.some((x) => x.method === 'DELETE' && x.path.endsWith('bounty%3A%2010%20USDC'))).toBe(true);
     expect(g.calls.at(-1)!.body).toEqual({ labels: ['bounty: 50 USDC'] });
   });
+  it('makes no changes when the issue already has exactly the target bounty label', async () => {
+    const g = fakeGithub();
+    g.routes['GET /repos/o/r/readme'] = () => ({ status: 404 });
+    const c = make(g);
+    await c.getReadmeExcerpt(9n, 'o/r'); // cache the installation token
+    g.calls.length = 0;
+    g.routes['GET /repos/o/r/issues/7/labels'] = () => ({ status: 200, json: [{ name: 'bug' }, { name: 'bounty: 50 USDC' }] });
+    await c.setBountyLabel(9n, 'o/r', 7, 'bounty: 50 USDC');
+    expect(g.calls).toHaveLength(1); // only the labels GET
+    expect(g.calls[0]!.method).toBe('GET');
+    expect(g.calls[0]!.path).toContain('/issues/7/labels?per_page=100');
+  });
   it('clears every bounty label from the issue', async () => {
     const g = fakeGithub();
     g.routes['GET /repos/o/r/issues/7/labels'] = () => ({
@@ -146,16 +158,38 @@ describe('calls', () => {
     expect(all.map((r) => r.id)).toEqual(Array.from({ length: 105 }, (_, i) => i + 1));
     expect(g.calls.filter((x) => x.path.startsWith('/installation/repositories?'))).toHaveLength(2);
   });
-  it('reads PR files across pages and summarises CI', async () => {
+  it('reads PR files across pages and combines check runs with commit statuses', async () => {
     const g = fakeGithub();
     const page = (n: number) => Array.from({ length: n }, (_, i) => ({ filename: `f${i}`, additions: 1, deletions: 0, patch: '+x' }));
     g.routes['GET /repos/o/r/pulls/3/files'] = (c) => ({ status: 200, json: new URLSearchParams(c.path.split('?')[1]).get('page') === '1' ? page(100) : page(5) });
     expect(await make(g).getPullFiles(9n, 'o/r', 3)).toHaveLength(105);
-    const ci = (runs: object[]) => { g.routes['GET /repos/o/r/commits/abc1234/check-runs'] = () => ({ status: 200, json: { check_runs: runs } }); return make(g).getCiConclusion(9n, 'o/r', 'abc1234'); };
-    expect(await ci([])).toBe('none');
-    expect(await ci([{ status: 'completed', conclusion: 'success' }, { status: 'completed', conclusion: 'skipped' }])).toBe('success');
-    expect(await ci([{ status: 'in_progress', conclusion: null }])).toBe('pending');
-    expect(await ci([{ status: 'completed', conclusion: 'success' }, { status: 'completed', conclusion: 'failure' }])).toBe('failure');
+    const checks = (runs: object[]) => { g.routes['GET /repos/o/r/commits/abc1234/check-runs'] = (c) => {
+      const pageNumber = Number(new URLSearchParams(c.path.split('?')[1]).get('page'));
+      return { status: 200, json: { total_count: runs.length, check_runs: pageNumber === 1 ? runs : [] } };
+    }; };
+    const status = (state: string, total_count = 1) => { g.routes['GET /repos/o/r/commits/abc1234/status'] = () => ({ status: 200, json: { state, total_count } }); };
+    checks([]); status('success', 0);
+    expect(await make(g).getCiConclusion(9n, 'o/r', 'abc1234')).toBe('none');
+    status('pending');
+    expect(await make(g).getCiConclusion(9n, 'o/r', 'abc1234')).toBe('pending');
+    checks([{ status: 'completed', conclusion: 'success' }, { status: 'completed', conclusion: 'skipped' }]); status('success', 0);
+    expect(await make(g).getCiConclusion(9n, 'o/r', 'abc1234')).toBe('success');
+    checks([{ status: 'in_progress', conclusion: null }]); status('success');
+    expect(await make(g).getCiConclusion(9n, 'o/r', 'abc1234')).toBe('pending');
+    checks([{ status: 'completed', conclusion: 'success' }]); status('failure');
+    expect(await make(g).getCiConclusion(9n, 'o/r', 'abc1234')).toBe('failure');
+    checks([{ status: 'completed', conclusion: 'failure' }]); status('pending');
+    expect(await make(g).getCiConclusion(9n, 'o/r', 'abc1234')).toBe('failure');
+    checks(Array.from({ length: 101 }, () => ({ status: 'completed', conclusion: 'success' }))); status('success', 0);
+    g.routes['GET /repos/o/r/commits/abc1234/check-runs'] = (c) => {
+      const pageNumber = Number(new URLSearchParams(c.path.split('?')[1]).get('page'));
+      return { status: 200, json: { total_count: 101, check_runs: pageNumber === 1 ? Array.from({ length: 100 }, () => ({ status: 'completed', conclusion: 'success' })) : [{ status: 'completed', conclusion: 'success' }] } };
+    };
+    expect(await make(g).getCiConclusion(9n, 'o/r', 'abc1234')).toBe('success');
+    expect(g.calls.filter((x) => x.path.includes('/check-runs?')).slice(-2).map((x) => x.path)).toEqual([
+      '/repos/o/r/commits/abc1234/check-runs?per_page=100&page=1',
+      '/repos/o/r/commits/abc1234/check-runs?per_page=100&page=2',
+    ]);
   });
 });
 

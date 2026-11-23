@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { DisputeStatus } from '@prisma/client';
 import type { Db } from '../db.js';
 import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
 
@@ -30,7 +31,7 @@ export async function collectAlerts(a: AlertInputs): Promise<string[]> {
     // 60 ledgers is about 5 minutes
     out.push(`Indexer is ${a.latestLedger - cursor.ledger} ledgers behind — see ${RUNBOOK_URL}#alert-indexer-lag`);
   }
-  const stale = await a.db.dispute.count({ where: { status: { in: ['requested', 'opened_onchain'] }, createdAt: { lt: new Date(now.getTime() - DISPUTE_REVIEW_HOURS * HOUR_MS) } } });
+  const stale = await a.db.dispute.count({ where: { status: { in: [DisputeStatus.REQUESTED, DisputeStatus.OPENED_ONCHAIN] }, createdAt: { lt: new Date(now.getTime() - DISPUTE_REVIEW_HOURS * HOUR_MS) } } });
   if (stale > 0) out.push(`${stale} dispute(s) older than ${DISPUTE_REVIEW_HOURS} h — see ${RUNBOOK_URL}#alert-disputes-overdue`);
 
   // merged-but-unpaid PRs whose refund window opens within 72 h: the arbiter may need to act

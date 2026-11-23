@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { DisputeStatus } from '@prisma/client';
 import { formatCommandHelp, fromBaseUnits, parseCommand } from '@skillescrow/shared';
 import type { Db } from '../db.js';
 import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
@@ -110,7 +111,7 @@ async function handleDispute(
     return await reply('Only the maintainer or an author of a linked PR can open a dispute.'), 'denied';
   }
   await d.db.dispute.create({
-    data: { bountyId: bounty.id, openedByGithubId: uid, openedByLogin: p.comment.user.login, reason: reason.slice(0, 2000), evidence: {}, status: 'requested' },
+    data: { bountyId: bounty.id, openedByGithubId: uid, openedByLogin: p.comment.user.login, reason: reason.slice(0, 2000), evidence: {}, status: DisputeStatus.REQUESTED },
   });
   await d.db.auditLog.create({ data: { actor: `github:${uid}`, action: 'dispute.requested', target: `bounty:${bounty.id}`, data: {} } });
   await reply(`Dispute recorded. A human will review this within ${DISPUTE_REVIEW_HOURS} hours.`);

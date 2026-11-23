@@ -1,5 +1,5 @@
 import { portion } from '@skillescrow/shared';
-import type { Prisma } from '@prisma/client';
+import { DisputeStatus, type Prisma } from '@prisma/client';
 import type { ChainEvent } from './decode.js';
 import { issueUrl } from '../github/issue-url.js';
 
@@ -112,7 +112,7 @@ export async function applyEvent(tx: Prisma.TransactionClient, ev: ChainEvent, m
     case 'disputed':
       if (b.status !== 'OPEN') return 'anomaly';
       await tx.bounty.update({ where: { id: b.id }, data: { lastEventId: meta.eventId, status: 'DISPUTED' } });
-      await tx.dispute.updateMany({ where: { bountyId: b.id, status: 'requested' }, data: { status: 'opened_onchain' } });
+      await tx.dispute.updateMany({ where: { bountyId: b.id, status: DisputeStatus.REQUESTED }, data: { status: DisputeStatus.OPENED_ONCHAIN } });
       return 'applied';
     case 'resolved': {
       if (b.status !== 'DISPUTED') return 'anomaly';
@@ -122,7 +122,7 @@ export async function applyEvent(tx: Prisma.TransactionClient, ev: ChainEvent, m
       const matched = proposals.find((p) => proposalMatches(p, BigInt(b.amount.toString()), ev));
       // the chain is the truth: always apply the resolution, even if the signed split differs from the note
       await tx.bounty.update({ where: { id: b.id }, data: { ...done, status: 'RESOLVED', winnerAddress: ev.winner } });
-      await tx.dispute.updateMany({ where: { bountyId: b.id, status: { in: ['requested', 'opened_onchain'] } }, data: { status: 'resolved' } });
+      await tx.dispute.updateMany({ where: { bountyId: b.id, status: { in: [DisputeStatus.REQUESTED, DisputeStatus.OPENED_ONCHAIN] } }, data: { status: DisputeStatus.RESOLVED } });
       if (matched) {
         await tx.dispute.update({
           where: { id: matched.id },

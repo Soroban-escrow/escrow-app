@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { PullRequestState } from '@prisma/client';
 import { formatCommandHelp, formatCommandTable } from '@skillescrow/shared';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
@@ -99,7 +100,7 @@ describe('command help from shared metadata (#135)', () => {
 describe('/bounty dispute', () => {
   beforeEach(async () => {
     await db.bounty.create({ data: { id: 1n, repoId: 100n, issueNumber: 7, issueTitle: '', issueUrl: '', criteria: [], maintainer: 'G', maintainerGithubId: 55n, token: 'CUSDC', amount: '1', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
-    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: 'open' } });
+    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: PullRequestState.OPEN } });
     await db.pullRequestBounty.create({ data: { prId: 5n, bountyId: 1n } });
   });
   it('lets the maintainer and a PR author open one, but not strangers', async () => {
@@ -124,7 +125,7 @@ describe('/bounty review (on a PR)', () => {
   beforeEach(async () => {
     requested = [];
     await db.bounty.create({ data: { id: 1n, repoId: 100n, issueNumber: 7, issueTitle: '', issueUrl: '', criteria: [], maintainer: 'G', maintainerGithubId: 55n, token: 'CUSDC', amount: '1', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
-    await db.pullRequest.create({ data: { id: 5n, number: 12, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: 'open' } });
+    await db.pullRequest.create({ data: { id: 5n, number: 12, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: PullRequestState.OPEN } });
     await db.pullRequestBounty.create({ data: { prId: 5n, bountyId: 1n } });
   });
   const onPr = (n: number) => payload('/bounty review', { issue: { number: n, state: 'open', pull_request: {} } });

@@ -1,3 +1,4 @@
+import { DisputeStatus } from '@prisma/client';
 import { Keypair } from '@stellar/stellar-sdk';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createSession } from '../src/auth/session.js';
@@ -48,7 +49,7 @@ beforeEach(async () => {
   await db.installation.create({ data: { id: 1n, accountLogin: 'o', accountType: 'User' } });
   await db.repo.create({ data: { id: 100n, installationId: 1n, fullName: 'o/r', private: false } });
   await db.bounty.create({ data: { id: 1n, repoId: 100n, issueNumber: 7, issueTitle: 'T', issueUrl: '', criteria: [], maintainer: 'GM', token: 'C', amount: '1000', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
-  dispute = (await db.dispute.create({ data: { bountyId: 1n, openedByGithubId: 9n, openedByLogin: 'reporter', reason: 'unfair', evidence: {}, status: 'requested' } })).id;
+  dispute = (await db.dispute.create({ data: { bountyId: 1n, openedByGithubId: 9n, openedByLogin: 'reporter', reason: 'unfair', evidence: {}, status: DisputeStatus.REQUESTED } })).id;
 });
 
 describe('admin guard', () => {
@@ -77,7 +78,7 @@ describe('disputes', () => {
     expect((await post(`/admin/disputes/${dispute}/resolve/build`, { arbiterAddress: ARB, winnerBps: 0 })).json().error.code).toBe('wrong_state');
     expect((await post(`/admin/disputes/${dispute}/open-onchain`, { arbiterAddress: 'bad' })).statusCode).toBe(400);
     expect((await post(`/admin/disputes/${dispute}/open-onchain`, { arbiterAddress: ARB })).json()).toEqual({ xdr: 'OPENXDR' });
-    await db.dispute.update({ where: { id: dispute }, data: { status: 'opened_onchain' } });
+    await db.dispute.update({ where: { id: dispute }, data: { status: DisputeStatus.OPENED_ONCHAIN } });
     expect((await post(`/admin/disputes/${dispute}/resolve/build`, { arbiterAddress: ARB, winnerBps: 7000 })).json().error.code).toBe('winner_required');
     expect((await post(`/admin/disputes/${dispute}/resolve/build`, { arbiterAddress: ARB, winnerBps: 7000, winner: WIN, note: '70/30' })).json()).toEqual({ xdr: 'RESXDR' });
     expect(calls.at(-1)).toEqual(['resolve', ARB, 1n, WIN, 7000]);
@@ -89,7 +90,7 @@ describe('disputes', () => {
     const { a, h } = await login(2n, true);
     expect((await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/reject`, headers: h, payload: {} })).statusCode).toBe(400);
     expect((await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/reject`, headers: h, payload: { note: 'no merit' } })).json()).toEqual({ ok: true });
-    expect((await db.dispute.findUniqueOrThrow({ where: { id: dispute } })).status).toBe('rejected');
+    expect((await db.dispute.findUniqueOrThrow({ where: { id: dispute } })).status).toBe(DisputeStatus.REJECTED);
     expect((await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/reject`, headers: h, payload: { note: 'again' } })).statusCode).toBe(409);
     expect(await db.auditLog.count({ where: { action: 'dispute.rejected' } })).toBe(1);
   });
@@ -106,7 +107,7 @@ describe('disputes', () => {
     const { a, h } = await login(2n, true);
     failComment = true;
     expect((await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/reject`, headers: h, payload: { note: 'try later' } })).json()).toEqual({ ok: true });
-    expect((await db.dispute.findUniqueOrThrow({ where: { id: dispute } })).status).toBe('rejected');
+    expect((await db.dispute.findUniqueOrThrow({ where: { id: dispute } })).status).toBe(DisputeStatus.REJECTED);
     expect(comments).toHaveLength(0);
     expect(await db.auditLog.count({ where: { action: 'dispute.rejected.notified' } })).toBe(0);
     expect(await db.auditLog.count({ where: { action: 'dispute.rejected.notify_failed' } })).toBe(1);
@@ -121,7 +122,7 @@ describe('disputes', () => {
   });
   it('building an unsigned resolution stores a proposal, not a resolutionNote', async () => {
     const { a, h } = await login(2n, true);
-    await db.dispute.update({ where: { id: dispute }, data: { status: 'opened_onchain' } });
+    await db.dispute.update({ where: { id: dispute }, data: { status: DisputeStatus.OPENED_ONCHAIN } });
     await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/resolve/build`, headers: h, payload: { arbiterAddress: ARB, winner: WIN, winnerBps: 7000, note: '70/30' } });
     const d = await db.dispute.findUniqueOrThrow({ where: { id: dispute } });
     expect(d.resolutionNote).toBeNull();
@@ -131,19 +132,19 @@ describe('disputes', () => {
   });
   it('copies the note only when the on-chain resolve matches the proposal', async () => {
     const { a, h } = await login(2n, true);
-    await db.dispute.update({ where: { id: dispute }, data: { status: 'opened_onchain' } });
+    await db.dispute.update({ where: { id: dispute }, data: { status: DisputeStatus.OPENED_ONCHAIN } });
     await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/resolve/build`, headers: h, payload: { arbiterAddress: ARB, winner: WIN, winnerBps: 7000, note: '70/30' } });
     await db.bounty.update({ where: { id: 1n }, data: { status: 'DISPUTED' } });
     // amount 1000, fee 30 -> spendable 970; 70% of 970 = 679
     expect(await apply(resolved({ winner: WIN, winnerNet: 679n, fee: 30n, maintainerAmount: 291n }), 3)).toBe('applied');
     const d = await db.dispute.findUniqueOrThrow({ where: { id: dispute } });
-    expect(d.status).toBe('resolved');
+    expect(d.status).toBe(DisputeStatus.RESOLVED);
     expect(d.resolutionNote).toBe('70/30');
     expect(d.pendingWinnerBps).toBeNull();
   });
   it('records an anomaly and keeps resolutionNote empty when the signed split differs', async () => {
     const { a, h } = await login(2n, true);
-    await db.dispute.update({ where: { id: dispute }, data: { status: 'opened_onchain' } });
+    await db.dispute.update({ where: { id: dispute }, data: { status: DisputeStatus.OPENED_ONCHAIN } });
     await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/resolve/build`, headers: h, payload: { arbiterAddress: ARB, winner: WIN, winnerBps: 7000, note: '70/30' } });
     await db.bounty.update({ where: { id: 1n }, data: { status: 'DISPUTED' } });
     expect(await apply(resolved({ winner: WIN, winnerNet: 500n, fee: 30n, maintainerAmount: 470n }), 3)).toBe('anomaly');
@@ -155,7 +156,7 @@ describe('disputes', () => {
   it('records an anomaly when the signed winner differs from the proposal', async () => {
     const { a, h } = await login(2n, true);
     const other = Keypair.random().publicKey();
-    await db.dispute.update({ where: { id: dispute }, data: { status: 'opened_onchain' } });
+    await db.dispute.update({ where: { id: dispute }, data: { status: DisputeStatus.OPENED_ONCHAIN } });
     await a.inject({ method: 'POST', url: `/admin/disputes/${dispute}/resolve/build`, headers: h, payload: { arbiterAddress: ARB, winner: WIN, winnerBps: 7000, note: '70/30' } });
     await db.bounty.update({ where: { id: 1n }, data: { status: 'DISPUTED' } });
     expect(await apply(resolved({ winner: other, winnerNet: 679n, fee: 30n, maintainerAmount: 291n }), 3)).toBe('anomaly');

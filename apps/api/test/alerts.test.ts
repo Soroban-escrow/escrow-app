@@ -1,3 +1,4 @@
+import { DisputeStatus } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
 import { alertSender, collectAlerts, redisCooldown } from '../src/ops/alerts.js';
@@ -22,7 +23,7 @@ describe('collectAlerts', () => {
     await bounty(1n, new Date(NOW.getTime() + 30 * 864e5));
     await db.payout.create({ data: { bountyId: 1n, prNumber: 1, winnerGithubId: 9n, status: 'FAILED', idempotencyKey: 'release:1' } });
     await db.indexerCursor.create({ data: { id: 'bounty_escrow', ledger: 1000 } });
-    await db.dispute.create({ data: { bountyId: 1n, openedByGithubId: 9n, reason: 'x', evidence: {}, status: 'requested', createdAt: new Date(NOW.getTime() - 40 * 3600e3) } });
+    await db.dispute.create({ data: { bountyId: 1n, openedByGithubId: 9n, reason: 'x', evidence: {}, status: DisputeStatus.REQUESTED, createdAt: new Date(NOW.getTime() - 40 * 3600e3) } });
     const a = await collectAlerts({ db, now: () => NOW, minRelayerXlm: 50, relayerBalanceXlm: 3, latestLedger: 1200 });
     expect(a.join('|')).toMatch(/Relayer balance low/);
     expect(a.join('|')).toMatch(/1 payout\(s\) FAILED/);
