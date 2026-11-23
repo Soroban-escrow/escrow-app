@@ -61,6 +61,7 @@ model Repo {
   active         Boolean      @default(true)
   bounties       Bounty[]
   @@index([installationId])
+  @@index([fullName(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model FundingIntent {
@@ -128,6 +129,7 @@ model Bounty {
   disputes           Dispute[]
   @@index([repoId, issueNumber])
   @@index([status])
+  @@index([issueTitle(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([maintainer])
 }
 

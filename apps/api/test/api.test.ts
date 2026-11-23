@@ -143,6 +143,8 @@ describe('public reads', () => {
     expect((await a.inject('/bounties?sort=ending')).json().items[0].id).toBe('1');
     expect((await a.inject('/bounties?minAmount=2500')).json().items).toHaveLength(1);
     expect((await a.inject('/bounties?q=issue%202')).json().items).toHaveLength(1);
+    expect((await a.inject('/bounties?q=ISSUE%202')).json().items).toHaveLength(1);
+    expect((await a.inject('/bounties?q=o%2Frepo')).json().items).toHaveLength(3);
     expect((await a.inject('/bounties?status=RELEASED')).json().items).toHaveLength(1);
     expect((await a.inject('/bounties?status=bogus')).statusCode).toBe(400);
   });

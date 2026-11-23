@@ -70,4 +70,24 @@ describe('parseCommand', () => {
     expect(parseCommand('/bounty')).toEqual({ kind: 'help' });
     expect(parseCommand('/bounty help')).toEqual({ kind: 'help' });
   });
+  it.each([
+    ['/bounty\t50\tUSDC\t14d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/bounty 50 USDC 14d\r\nignored text', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/BOUNTY 50 USDC 14d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/bounty 50 USDC 999d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 999 }],
+    ['/bounty 50usdc', { kind: 'error', message: 'Invalid amount "50usdc".' }],
+    ['/bounty 50 USDC 14 d', { kind: 'error', message: 'Unrecognised "14". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 50 USDC 0d', { kind: 'error', message: 'Duration must be at least 1 day.' }],
+    ['/bounty 50 USDC 14d extra', { kind: 'error', message: 'Unrecognised "extra". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 50 USDC 🚀', { kind: 'error', message: 'Unrecognised "🚀". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 1.00000001', { kind: 'error', message: 'Invalid amount "1.00000001".' }],
+    ['/bounty +5', { kind: 'error', message: 'Invalid amount "+5".' }],
+    ['/bounty -5', { kind: 'error', message: 'Invalid amount "-5".' }],
+  ])('handles edge case %#', (input, expected) => {
+    expect(parseCommand(input)).toEqual(expected);
+  });
+  it('accepts very long dispute reasons without truncation', () => {
+    const reason = 'x'.repeat(10_000);
+    expect(parseCommand(`/bounty dispute ${reason}`)).toEqual({ kind: 'dispute', reason });
+  });
 });

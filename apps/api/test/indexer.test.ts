@@ -25,11 +25,25 @@ describe('decodeEvent', () => {
     });
     expect(ev).toMatchObject({ kind: 'funded', id: 1n, amount: 100000000n, feeBps: 300, relayerAllowed: true, maintainer });
   });
-  it('ignores untracked events and rejects malformed ones', () => {
+  it('ignores untracked and malformed events', () => {
     expect(decodeEvent({ topic: [sym('bounty'), sym('config'), sym('token')], value: nativeToScVal({}) })).toBeNull();
     expect(decodeEvent({ topic: [sym('other')], value: nativeToScVal({}) })).toBeNull();
-    expect(() => decodeEvent({ topic: [sym('bounty'), sym('refunded')], value: nativeToScVal({}) })).toThrow();
-    expect(() => decodeEvent({ topic: [sym('bounty'), sym('refunded'), u64(1n)], value: nativeToScVal({ amount: 'x' }) })).toThrow();
+    expect(decodeEvent({ topic: [sym('bounty'), sym('refunded')], value: nativeToScVal({}) })).toBeNull();
+    expect(decodeEvent({ topic: [sym('bounty'), sym('refunded'), u64(1n)], value: nativeToScVal({ amount: 'x' }) })).toBeNull();
+    expect(decodeEvent({ topic: [sym('bounty'), sym('funded'), u64(1n)], value: nativeToScVal({ fee_bps: -1 }) })).toBeNull();
+  });
+
+  it('never throws for random or truncated event shapes', () => {
+    let seed = 0x9e3779b9;
+    const rand = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 0x100000000);
+    const atoms: unknown[] = ['bounty', 'funded', 'released', 'refunded', 'disputed', 'resolved', 'config', 'other', 1n, 7n, 'x', null, true];
+    const pick = () => atoms[Math.floor(rand() * atoms.length)] as never;
+    for (let i = 0; i < 300; i++) {
+      const topic = Array.from({ length: Math.floor(rand() * 5) }, () => nativeToScVal(pick()));
+      const value = rand() < 0.1 ? undefined as never : nativeToScVal({ amount: pick(), fee_bps: pick() } as never);
+      expect(() => decodeEvent({ topic, value })).not.toThrow();
+      expect(decodeEvent({ topic, value })).toBeNull();
+    }
   });
   it('decodes resolved with and without a winner', () => {
     const base = { fee: 1n, maintainer_amount: 2n, winner_net: 3n };
@@ -66,6 +80,18 @@ describe('applyEvent', () => {
     expect(b.winnerAddress).toBe(w);
     expect(b.amount.toString()).toBe('1000');
     expect(b.closeTx).toBe('tx2');
+  });
+
+  it('orders event ids across TOID and index digit-length boundaries', async () => {
+    const w = addr();
+    const release = (id: bigint): ChainEvent => ({ kind: 'released', id, winner: w, net: 970n, fee: 30n, caller: w });
+    await db.$transaction((tx) => applyEvent(tx, funded(), { ...meta(1), eventId: '9999999999999999999-0000000001' }));
+    expect(await db.$transaction((tx) => applyEvent(tx, release(1n), { ...meta(2), eventId: '10000000000000000000-0000000000' }))).toBe('applied');
+    expect(await db.$transaction((tx) => applyEvent(tx, release(1n), { ...meta(1), eventId: '9999999999999999999-0000000001' }))).toBe('stale');
+
+    await db.$transaction((tx) => applyEvent(tx, funded({ id: 2n }), { ...meta(3), eventId: '0000000000000000123-0000000009' }));
+    expect(await db.$transaction((tx) => applyEvent(tx, release(2n), { ...meta(4), eventId: '0000000000000000123-0000000010' }))).toBe('applied');
+    expect(await db.$transaction((tx) => applyEvent(tx, release(2n), { ...meta(3), eventId: '0000000000000000123-0000000009' }))).toBe('stale');
   });
 
   it('replaying an old event against a later state is stale, not an anomaly', async () => {
