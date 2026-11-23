@@ -449,6 +449,7 @@ falling back to per IP.
 | `GET` | `/auth/login`, `/auth/callback` | — | GitHub OAuth (PKCE) |
 | `GET` | `/auth/me` | session | profile + CSRF token |
 | `POST` | `/auth/logout` | session + CSRF | |
+| `POST` | `/auth/logout-all` | session + CSRF | end all of the user's sessions |
 | `POST` | `/wallet/challenge`, `/wallet/verify` | session + CSRF | SEP-53 wallet linking |
 | `DELETE` | `/wallet` | session + CSRF | unlink |
 | `GET` | `/bounties` | — | list; filter by status, token, repository, min amount, query; sort; cursor paging |

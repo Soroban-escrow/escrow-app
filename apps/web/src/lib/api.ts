@@ -18,7 +18,6 @@ export async function apiGet<T>(path: string): Promise<T | null> {
   }
 }
 
-/** Token symbol from the API's token config, then the environment; unknown tokens show a short id. */
 export function symbolFor(token: string, tokens: TokenInfo[] = []): string {
   const configured = tokens.find((item) => item.address === token)?.symbol;
   if (configured) return configured;
