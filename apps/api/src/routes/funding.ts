@@ -21,6 +21,9 @@ export interface FundingDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
+export const intentBuildSchema = z.object({ address: z.string(), relayerAllowed: z.boolean() });
+export const txSubmitSchema = z.object({ xdr: z.string().min(10).max(20_000), address: z.string().optional(), intentId: z.string().optional() });
+
 export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (mutating: boolean) => object) {
   const now = () => (d.now ?? (() => new Date()))();
   const limit = mutationLimit(20);
@@ -40,10 +43,9 @@ export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (m
     };
   });
 
-  const build = z.object({ address: z.string(), relayerAllowed: z.boolean() });
   app.post('/intents/:id/build', { ...authed(true), ...limit }, async (req, reply) => {
     const u = (req as Authed).user!;
-    const body = build.safeParse(req.body);
+    const body = intentBuildSchema.safeParse(req.body);
     if (!body.success || !StrKey.isValidEd25519PublicKey(body.data.address)) return err(reply, 400, 'bad_request', 'a valid address and relayerAllowed are required');
     const i = await d.db.fundingIntent.findUnique({ where: { id: (req.params as { id: string }).id } });
     if (!i) return err(reply, 404, 'not_found', 'funding link not found');
@@ -61,9 +63,8 @@ export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (m
   });
 
   /** Relays a signed single-operation contract call. Never trusts client claims about the result. */
-  const submit = z.object({ xdr: z.string().min(10).max(20_000), address: z.string().optional(), intentId: z.string().optional() });
   app.post('/tx/submit', { ...authed(true), ...limit }, async (req, reply) => {
-    const body = submit.safeParse(req.body);
+    const body = txSubmitSchema.safeParse(req.body);
     if (!body.success) return err(reply, 400, 'bad_request', 'xdr required');
     // The client tells us which funding link it signed for. Only the link's owner can bind a
     // submission to it; otherwise a stray intentId could attribute someone else's bounty to them.

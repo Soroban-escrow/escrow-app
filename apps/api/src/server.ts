@@ -4,6 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import type { Config } from './config.js';
 import { verifySignature } from './github/signature.js';
 import { registerApi, type ApiDeps } from './routes/api.js';
+import { openApiDocument } from './routes/openapi.js';
 
 /** Minimal storage the webhook route needs; the real one is Prisma, tests pass a fake. */
 export interface DeliveryStore {
@@ -41,6 +42,7 @@ export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDe
   app.get('/readyz', readiness);
   // Kept for existing monitors and docs; same as /readyz.
   app.get('/health', readiness);
+  app.get('/openapi.json', async () => openApiDocument);
   if (api) registerApi(app, api);
 
   app.post('/github/webhooks', async (req, reply) => {
@@ -53,14 +55,20 @@ export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDe
     if (typeof id !== 'string' || typeof event !== 'string') {
       return reply.code(400).send({ error: { code: 'bad_request', message: 'missing delivery headers' } });
     }
+    const deliveryLog = req.log.child({ deliveryId: id, githubEvent: event });
+    deliveryLog.info('webhook delivery received');
     let payload: unknown;
     try {
       payload = JSON.parse(raw.toString('utf8'));
     } catch {
       return reply.code(400).send({ error: { code: 'bad_json', message: 'invalid JSON' } });
     }
-    if (!(await store.insert(id, event))) return reply.code(200).send({ duplicate: true });
+    if (!(await store.insert(id, event))) {
+      deliveryLog.info('duplicate webhook delivery ignored');
+      return reply.code(200).send({ duplicate: true });
+    }
     await store.enqueue(id, event, payload);
+    deliveryLog.info('webhook delivery queued');
     return reply.code(202).send({ queued: true });
   });
 

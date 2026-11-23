@@ -33,6 +33,19 @@ export interface ApiDeps {
   commenter?: IssueCommenter;
 }
 
+export const walletBodySchema = z.object({ address: z.string() });
+export const verifyBodySchema = z.object({ challengeId: z.string(), signature: z.string() });
+export const listQuerySchema = z.object({
+  status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED', 'ALL']).optional(),
+  token: z.string().optional(),
+  repo: z.string().max(200).optional(),
+  minAmount: z.string().regex(/^\d+$/).optional(),
+  q: z.string().max(100).optional(),
+  sort: z.enum(['newest', 'highest', 'ending']).default('newest'),
+  cursor: z.string().regex(/^\d{1,18}$/).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
 export function registerApi(app: FastifyInstance, d: ApiDeps) {
   const cookies = (req: FastifyRequest) =>
     Object.fromEntries((req.headers.cookie ?? '').split(';').map((c) => c.trim().split('=') as [string, string]).filter(([k]) => k));
@@ -88,9 +101,8 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
   });
 
-  const walletBody = z.object({ address: z.string() });
   app.post('/wallet/challenge', { ...authed(true), ...mutationLimit }, async (req, reply) => {
-    const body = walletBody.safeParse(req.body);
+    const body = walletBodySchema.safeParse(req.body);
     if (!body.success) return err(reply, 400, 'bad_request', 'address required');
     try {
       return await createChallenge({ db: d.db }, (req as Authed).user!.id, body.data.address);
@@ -99,9 +111,8 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
       throw e;
     }
   });
-  const verifyBody = z.object({ challengeId: z.string(), signature: z.string() });
   app.post('/wallet/verify', { ...authed(true), ...mutationLimit }, async (req, reply) => {
-    const body = verifyBody.safeParse(req.body);
+    const body = verifyBodySchema.safeParse(req.body);
     if (!body.success) return err(reply, 400, 'bad_request', 'challengeId and signature required');
     const u = (req as Authed).user!;
     let result: Awaited<ReturnType<typeof verifyChallenge>>;
@@ -152,18 +163,8 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     return { statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: tokens.map((x) => x.token), repositories: repos.map((x) => x.fullName) };
   });
 
-  const listQuery = z.object({
-    status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED', 'ALL']).optional(),
-    token: z.string().optional(),
-    repo: z.string().max(200).optional(),
-    minAmount: z.string().regex(/^\d+$/).optional(),
-    q: z.string().max(100).optional(),
-    sort: z.enum(['newest', 'highest', 'ending']).default('newest'),
-    cursor: z.string().regex(/^\d{1,18}$/).optional(),
-    limit: z.coerce.number().int().min(1).max(50).default(20),
-  });
   app.get('/bounties', async (req, reply) => {
-    const p = listQuery.safeParse(req.query);
+    const p = listQuerySchema.safeParse(req.query);
     if (!p.success) return err(reply, 400, 'bad_request', 'invalid query');
     const f = p.data;
     const rows = await d.db.bounty.findMany({

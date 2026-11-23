@@ -22,6 +22,16 @@ export interface AdminDeps {
   adminGithubIds: bigint[];
 }
 
+export const arbiterAddressSchema = z.object({ arbiterAddress: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a)) });
+export const disputeResolveSchema = z.object({
+  arbiterAddress: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a)),
+  winner: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a)).optional(),
+  winnerBps: z.number().int().min(0).max(10_000),
+  note: z.string().max(1000).default(''),
+});
+export const disputeRejectSchema = z.object({ note: z.string().min(1).max(1000) });
+export const payoutQuerySchema = z.object({ status: z.enum(['FAILED', 'PENDING_WALLET', 'AWAITING_MAINTAINER', 'QUEUED', 'SUBMITTED', 'CONFIRMED']).default('FAILED') });
+
 export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutating: boolean) => object) {
   const now = () => (d.now ?? (() => new Date()))();
   /** Admin rights are checked server-side on every route; the flag follows config, not the client. */
@@ -51,11 +61,10 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
     const x = await d.db.dispute.findUnique({ where: { id } });
     return x ?? void err(reply, 404, 'not_found', 'dispute not found');
   }
-  const addr = z.object({ arbiterAddress: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a)) });
   app.post('/admin/disputes/:id/open-onchain', adminOnly(true), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
     const x = await load(req, reply); if (!x) return reply;
-    const b = addr.safeParse(req.body);
+    const b = arbiterAddressSchema.safeParse(req.body);
     if (!b.success) return err(reply, 400, 'bad_request', 'a valid arbiterAddress is required');
     if (x.status !== DisputeStatus.REQUESTED) return err(reply, 409, 'wrong_state', `dispute is ${x.status}`);
     try {
@@ -65,16 +74,10 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
     } catch (e) { return chainError(reply, e instanceof Error ? e : new Error('')); }
   });
 
-  const resolve = z.object({
-    arbiterAddress: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a)),
-    winner: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a)).optional(),
-    winnerBps: z.number().int().min(0).max(10_000),
-    note: z.string().max(1000).default(''),
-  });
   app.post('/admin/disputes/:id/resolve/build', adminOnly(true), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
     const x = await load(req, reply); if (!x) return reply;
-    const b = resolve.safeParse(req.body);
+    const b = disputeResolveSchema.safeParse(req.body);
     if (!b.success) return err(reply, 400, 'bad_request', 'arbiterAddress, winnerBps (0-10000) and, when bps > 0, a winner are required');
     if (b.data.winnerBps > 0 && !b.data.winner) return err(reply, 400, 'winner_required', 'a winner address is required when winnerBps > 0');
     if (x.status !== DisputeStatus.OPENED_ONCHAIN) return err(reply, 409, 'wrong_state', `dispute is ${x.status}; open it on chain first`);
@@ -93,7 +96,7 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
   app.post('/admin/disputes/:id/reject', adminOnly(true), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
     const x = await load(req, reply); if (!x) return reply;
-    const note = z.object({ note: z.string().min(1).max(1000) }).safeParse(req.body);
+    const note = disputeRejectSchema.safeParse(req.body);
     if (!note.success) return err(reply, 400, 'bad_request', 'a note is required');
     if (x.status !== DisputeStatus.REQUESTED) return err(reply, 409, 'wrong_state', `dispute is ${x.status}`);
     await d.db.dispute.update({ where: { id: x.id }, data: { status: DisputeStatus.REJECTED, resolutionNote: note.data.note } });
@@ -108,7 +111,7 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
 
   app.get('/admin/payouts', adminOnly(false), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
-    const status = z.enum(['FAILED', 'PENDING_WALLET', 'AWAITING_MAINTAINER', 'QUEUED', 'SUBMITTED', 'CONFIRMED']).default('FAILED').parse((req.query as { status?: string }).status ?? 'FAILED');
+    const status = payoutQuerySchema.parse(req.query).status;
     return ser(await d.db.payout.findMany({ where: { status }, orderBy: { updatedAt: 'desc' }, take: 100 }));
   });
 

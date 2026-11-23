@@ -23,6 +23,10 @@ const db = createDb(cfg.DATABASE_URL);
 const chain = createChain({ rpcUrl: cfg.STELLAR_RPC_URL, networkPassphrase: cfg.STELLAR_NETWORK_PASSPHRASE, contractId: cfg.BOUNTY_CONTRACT_ID });
 const logger = pino({ level: cfg.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers.cookie'] });
 const log = (msg: string, extra?: unknown) => logger.info({ extra }, msg);
+const deliveryLog = (deliveryId?: string) => {
+  const child = logger.child({ deliveryId: deliveryId ?? 'unknown' });
+  return (msg: string, extra?: unknown) => child.info({ extra }, msg);
+};
 
 // Without GitHub App credentials the worker still runs, but jobs that need GitHub fail loudly and the
 // queue retries them, rather than silently doing nothing.
@@ -95,8 +99,24 @@ const alertTimer = setInterval(async () => {
     await send(await collectAlerts({ db, minRelayerXlm: cfg.RELAYER_MIN_XLM_ALERT, ...(balance !== undefined ? { relayerBalanceXlm: balance } : {}), ...(latest !== undefined ? { latestLedger: latest } : {}) }));
   } catch (e) { log('alert check failed', e instanceof Error ? e.message : String(e)); }
 }, 60_000);
-const w = webhookWorker(cfg.REDIS_URL, async (job) => log('webhook handled', { id: job.id, event: job.event, result: await dispatchWebhook(deps as never, job.event, job.payload) }));
-w.worker.on('failed', (j, e) => log('webhook job failed', { id: j?.id, error: e.message }));
+const webhookDeps = (jobLog: (msg: string, extra?: unknown) => void) => ({
+  ...deps,
+  log: jobLog,
+  pulls: {
+    ...deps.pulls,
+    ...(reviews ? { reviewTrigger: (prId: bigint) => void reviews.schedule(prId).catch((e) => jobLog('review schedule failed', e instanceof Error ? e.message : String(e))) } : {}),
+  },
+  refreshCard: async (bountyId: bigint) => {
+    if (!sync) return jobLog('card refresh skipped (GitHub App not configured)', { bounty: String(bountyId) });
+    await refreshBountyCard({ ...sync, log: jobLog }, bountyId);
+  },
+});
+const w = webhookWorker(cfg.REDIS_URL, async (job) => {
+  const jobLog = deliveryLog(job.deliveryId);
+  const result = await dispatchWebhook(webhookDeps(jobLog) as never, job.event, job.payload);
+  jobLog('webhook handled', { id: job.id, deliveryId: job.deliveryId, event: job.event, result });
+});
+w.worker.on('failed', (j, e) => deliveryLog(j?.data.deliveryId ?? j?.data.id)('webhook job failed', { id: j?.id, error: e.message }));
 // every chain event for a bounty refreshes its GitHub card (coalesced per batch; releases announce payout)
 const onApplied = sync ? handleApplied(sync, cfg.EXPLORER_TX_URL_TEMPLATE, log) : undefined;
 void runIndexer({ db, server: chain.server, contractId: cfg.BOUNTY_CONTRACT_ID, log, onAlert: (m) => void send([m]), ...(onApplied ? { onApplied } : {}) }, ac.signal);

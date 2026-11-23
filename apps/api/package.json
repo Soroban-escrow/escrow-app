@@ -9,6 +9,7 @@
     "typecheck": "tsc -p .",
     "eval:ai": "tsx eval/run.ts",
     "worker": "tsx src/worker/main.ts",
+    "openapi:check": "tsx src/routes/openapi-check.ts",
     "sync:installations": "tsx src/worker/sync-installations.ts",
     "db:seed": "prisma db seed",
     "reindex": "tsx src/indexer/reindex.ts",
