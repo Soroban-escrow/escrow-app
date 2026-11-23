@@ -12,6 +12,7 @@ const REDIS = process.env.TEST_REDIS_URL ?? 'redis://localhost:6379/1';
 
 let comments: string[];
 let cardUpdates: string[];
+let notifications: { bountyId: bigint; prNumber: number; message: string }[];
 // Fake GitHub API for card refreshes. getIssue fails on purpose: the refreshed card must be
 // rendered from the criteria the issues.edited handler just wrote to the DB.
 const gh: GithubApi = {
@@ -27,13 +28,21 @@ const deps = (): DispatchDeps => ({
     tokens: { USDC: { address: 'CUSDC', min: 10_000_000n, max: 5_000_000_000n }, XLM: { address: 'CXLM', min: 1n, max: 9n } },
     gh: { getPermission: async () => 'write', postComment: async (_i, _r, _n, b) => (comments.push(b), 1n) },
   },
-  pulls: { db, webUrl: 'https://app.test', chain: { getBounty: async () => ({ status: 'Open', relayerAllowed: true, maintainer: 'GM' }) }, notifier: { notify: async () => {} } },
+  pulls: {
+    db,
+    webUrl: 'https://app.test',
+    chain: { getBounty: async () => ({ status: 'Open', relayerAllowed: true, maintainer: 'GM' }) },
+    notifier: { notify: async (b, pr, m) => { notifications.push({ bountyId: b, prNumber: pr, message: m }); } },
+  },
+  notifier: { notify: async (b, pr, m) => { notifications.push({ bountyId: b, prNumber: pr, message: m }); } },
   refreshCard: async (bountyId) => { await refreshBountyCard({ db, gh, webUrl: 'https://app.test', symbolFor: () => 'USDC' }, bountyId); },
 });
 
 beforeEach(async () => {
   comments = [];
-  await db.$executeRawUnsafe('TRUNCATE "Payout","PullRequestBounty","PullRequest","Bounty","FundingIntent","UntrackedFundEvent","Repo","Installation" CASCADE');
+  cardUpdates = [];
+  notifications = [];
+  await db.$executeRawUnsafe('TRUNCATE "AuditLog","Payout","PullRequestBounty","PullRequest","Bounty","FundingIntent","UntrackedFundEvent","Repo","Installation" CASCADE');
 });
 
 const install = { action: 'created', installation: { id: 9, account: { login: 'o', type: 'Organization' } }, repositories: [{ id: 100, full_name: 'o/r', private: false }] };
@@ -104,6 +113,140 @@ describe('dispatchWebhook', () => {
     const b = await db.bounty.findUniqueOrThrow({ where: { id: 1n } });
     expect(b.issueTitle).toBe('New title');
     expect(b.criteria).toEqual(['one', 'two']);
+  });
+  it('audit-logs criteria change on OPEN bounty and posts comments on open linked PRs', async () => {
+    await dispatchWebhook(deps(), 'installation', install);
+    await db.bounty.create({
+      data: {
+        id: 10n, repoId: 100n, issueNumber: 20, issueTitle: 'Bounty 20', issueUrl: '',
+        criteria: ['old criterion'], maintainer: 'GM', token: 'C', amount: '1', feeBps: 300,
+        deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date(),
+      },
+    });
+    await db.pullRequest.create({
+      data: { id: 201n, number: 201, authorGithubId: 11n, authorLogin: 'dev1', headSha: 'sha1', state: 'OPEN' },
+    });
+    await db.pullRequestBounty.create({ data: { prId: 201n, bountyId: 10n } });
+    await db.pullRequest.create({
+      data: { id: 202n, number: 202, authorGithubId: 12n, authorLogin: 'dev2', headSha: 'sha2', state: 'MERGED' },
+    });
+    await db.pullRequestBounty.create({ data: { prId: 202n, bountyId: 10n } });
+
+    const out = await dispatchWebhook(deps(), 'issues', {
+      action: 'edited',
+      repository: { id: 100 },
+      issue: { number: 20, title: 'Bounty 20 Updated', body: '## Acceptance criteria\n- [ ] new criterion 1\n- [ ] new criterion 2' },
+      sender: { id: 99, login: 'maintainer' },
+    });
+    expect(out).toBe('issues.edited:1');
+
+    const b = await db.bounty.findUniqueOrThrow({ where: { id: 10n } });
+    expect(b.criteria).toEqual(['new criterion 1', 'new criterion 2']);
+
+    const audits = await db.auditLog.findMany({ where: { target: 'bounty:10' } });
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      actor: 'github:99',
+      action: 'bounty.criteria_changed',
+      target: 'bounty:10',
+    });
+    const auditData = audits[0]!.data as { old: string[]; new: string[] };
+    expect(auditData.old).toEqual(['old criterion']);
+    expect(auditData.new).toEqual(['new criterion 1', 'new criterion 2']);
+
+    // Only open PR 201 is notified; merged PR 202 is skipped
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      bountyId: 10n,
+      prNumber: 201,
+    });
+    expect(notifications[0]!.message).toContain('acceptance criteria');
+    expect(notifications[0]!.message).toContain('new criterion 1');
+  });
+  it('does not audit-log or notify when criteria are unchanged on an OPEN bounty', async () => {
+    await dispatchWebhook(deps(), 'installation', install);
+    await db.bounty.create({
+      data: {
+        id: 11n, repoId: 100n, issueNumber: 21, issueTitle: 'Bounty 21', issueUrl: '',
+        criteria: ['same criterion'], maintainer: 'GM', token: 'C', amount: '1', feeBps: 300,
+        deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date(),
+      },
+    });
+    await db.pullRequest.create({
+      data: { id: 211n, number: 211, authorGithubId: 11n, authorLogin: 'dev1', headSha: 'sha1', state: 'OPEN' },
+    });
+    await db.pullRequestBounty.create({ data: { prId: 211n, bountyId: 11n } });
+
+    // Issue edited with different title but identical criteria
+    const out = await dispatchWebhook(deps(), 'issues', {
+      action: 'edited',
+      repository: { id: 100 },
+      issue: { number: 21, title: 'Bounty 21 Renamed', body: '## Acceptance criteria\n- [ ] same criterion' },
+    });
+    expect(out).toBe('issues.edited:1');
+
+    const b = await db.bounty.findUniqueOrThrow({ where: { id: 11n } });
+    expect(b.issueTitle).toBe('Bounty 21 Renamed');
+    expect(b.criteria).toEqual(['same criterion']);
+
+    // No audit-log entry and no comment on the PR
+    expect(await db.auditLog.count({ where: { target: 'bounty:11' } })).toBe(0);
+    expect(notifications).toHaveLength(0);
+  });
+  it('does not audit-log or notify when criteria change on a DISPUTED bounty', async () => {
+    await dispatchWebhook(deps(), 'installation', install);
+    await db.bounty.create({
+      data: {
+        id: 12n, repoId: 100n, issueNumber: 22, issueTitle: 'Disputed Bounty', issueUrl: '',
+        criteria: ['initial criteria'], maintainer: 'GM', token: 'C', amount: '1', feeBps: 300,
+        deadline: new Date(), relayerAllowed: true, status: 'DISPUTED', fundTx: 't', createdAt: new Date(),
+      },
+    });
+    await db.pullRequest.create({
+      data: { id: 221n, number: 221, authorGithubId: 11n, authorLogin: 'dev1', headSha: 'sha1', state: 'OPEN' },
+    });
+    await db.pullRequestBounty.create({ data: { prId: 221n, bountyId: 12n } });
+
+    const out = await dispatchWebhook(deps(), 'issues', {
+      action: 'edited',
+      repository: { id: 100 },
+      issue: { number: 22, title: 'Disputed Bounty Edited', body: '## Acceptance criteria\n- [ ] changed criterion' },
+    });
+    expect(out).toBe('issues.edited:1');
+
+    const b = await db.bounty.findUniqueOrThrow({ where: { id: 12n } });
+    expect(b.criteria).toEqual(['changed criterion']);
+
+    expect(await db.auditLog.count({ where: { target: 'bounty:12' } })).toBe(0);
+    expect(notifications).toHaveLength(0);
+  });
+  it('notifies every open linked PR when criteria change on an OPEN bounty', async () => {
+    await dispatchWebhook(deps(), 'installation', install);
+    await db.bounty.create({
+      data: {
+        id: 13n, repoId: 100n, issueNumber: 23, issueTitle: 'Bounty 23', issueUrl: '',
+        criteria: ['step 1'], maintainer: 'GM', token: 'C', amount: '1', feeBps: 300,
+        deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date(),
+      },
+    });
+    await db.pullRequest.create({
+      data: { id: 231n, number: 231, authorGithubId: 11n, authorLogin: 'dev1', headSha: 'sha1', state: 'OPEN' },
+    });
+    await db.pullRequestBounty.create({ data: { prId: 231n, bountyId: 13n } });
+    await db.pullRequest.create({
+      data: { id: 232n, number: 232, authorGithubId: 12n, authorLogin: 'dev2', headSha: 'sha2', state: 'OPEN' },
+    });
+    await db.pullRequestBounty.create({ data: { prId: 232n, bountyId: 13n } });
+
+    await dispatchWebhook(deps(), 'issues', {
+      action: 'edited',
+      repository: { id: 100 },
+      issue: { number: 23, title: 'Bounty 23', body: '## Acceptance criteria\n- [ ] step 1\n- [ ] step 2' },
+    });
+
+    expect(notifications).toHaveLength(2);
+    expect(notifications.map((n) => n.prNumber).sort()).toEqual([231, 232]);
+    expect(await db.auditLog.count({ where: { target: 'bounty:13' } })).toBe(1);
   });
   it('replays a fund event that arrived before the installation webhook', async () => {
     // The indexer sees the fund first, while the repo is not installed yet. The cursor moves on.

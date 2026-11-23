@@ -12,7 +12,7 @@ import { anthropicModel } from '../ai/anthropic.js';
 import { runPrReview } from '../ai/pipeline.js';
 import { createGithubClient, asPort } from '../github/client.js';
 import type { GithubPort } from '../github/commands.js';
-import { announcePayout, githubIssueCommenter, githubNotifier, refreshBountyCard, retryPendingRejectComments } from '../github/sync.js';
+import { announcePayout, githubIssueCommenter, githubNotifier, handleApplied, refreshBountyCard, retryPendingRejectComments } from '../github/sync.js';
 import { dispatchWebhook } from './dispatch.js';
 import { reviewProducer, reviewWorker } from './review-queue.js';
 import { webhookWorker } from './queue.js';
@@ -43,14 +43,17 @@ const reviewsOn = Boolean(ghClient && cfg.ANTHROPIC_API_KEY);
 const reviews = reviewsOn ? reviewProducer(cfg.REDIS_URL) : null;
 if (!reviewsOn) log('AI review disabled: needs the GitHub App and ANTHROPIC_API_KEY');
 
+const notifier = ghClient ? githubNotifier({ db, gh: ghClient }) : { notify: async (b: bigint, pr: number, m: string) => log('notify skipped (GitHub App not configured)', { b: String(b), pr, m }) };
+
 const deps = {
   db,
   commands: { db, gh, webUrl: cfg.WEB_PUBLIC_URL, ...(reviews ? { requestReview: (id: bigint) => reviews.schedule(id, 0, true) } : {}), minDays: 1, maxDays: 90, tokens: { USDC: { address: usdc, ...limits }, XLM: { address: xlm, ...limits } } },
   pulls: {
     db, webUrl: cfg.WEB_PUBLIC_URL, ...(reviews ? { reviewTrigger: (id: bigint) => void reviews.schedule(id).catch((e) => log('review schedule failed', e instanceof Error ? e.message : String(e))) } : {}),
     chain: { getBounty: async (id: bigint) => { const b = await chain.getBounty(id); return { status: b.status.tag, relayerAllowed: b.relayer_allowed, maintainer: b.maintainer, winner: b.winner ?? null }; } },
-    notifier: ghClient ? githubNotifier({ db, gh: ghClient }) : { notify: async (b: bigint, pr: number, m: string) => log('notify skipped (GitHub App not configured)', { b: String(b), pr, m }) },
+    notifier,
   },
+  notifier,
   refreshCard: async (bountyId: bigint) => {
     if (!sync) return log('card refresh skipped (GitHub App not configured)', { bounty: String(bountyId) });
     await refreshBountyCard(sync, bountyId);
@@ -94,14 +97,8 @@ const alertTimer = setInterval(async () => {
 }, 60_000);
 const w = webhookWorker(cfg.REDIS_URL, async (job) => log('webhook handled', { id: job.id, event: job.event, result: await dispatchWebhook(deps as never, job.event, job.payload) }));
 w.worker.on('failed', (j, e) => log('webhook job failed', { id: j?.id, error: e.message }));
-// every chain event for a bounty refreshes its GitHub card (best effort; the chain is the truth)
-const onApplied = sync
-  ? ({ bountyId, kind }: { bountyId: bigint; kind: string }) => {
-      const fail = (what: string) => (e: unknown) => log(`${what} failed`, e instanceof Error ? e.message : String(e));
-      if (kind === 'released') void announcePayout({ ...sync, explorerTx: (h) => cfg.EXPLORER_TX_URL_TEMPLATE.replace('{hash}', encodeURIComponent(h)) }, bountyId).catch(fail('payout announcement'));
-      void refreshBountyCard(sync, bountyId).catch(fail('card refresh'));
-    }
-  : undefined;
+// every chain event for a bounty refreshes its GitHub card (coalesced per batch; releases announce payout)
+const onApplied = sync ? handleApplied(sync, cfg.EXPLORER_TX_URL_TEMPLATE, log) : undefined;
 void runIndexer({ db, server: chain.server, contractId: cfg.BOUNTY_CONTRACT_ID, log, onAlert: (m) => void send([m]), ...(onApplied ? { onApplied } : {}) }, ac.signal);
 for (const s of ['SIGINT', 'SIGTERM'] as const) process.on(s, () => { ac.abort(); clearInterval(alertTimer); clearInterval(reminderTimer); void Promise.all([w.close(), reviewConsumer?.close(), reviews?.close()]).then(() => process.exit(0)); });
 log('worker started');
