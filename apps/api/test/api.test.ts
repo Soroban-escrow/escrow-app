@@ -53,6 +53,17 @@ describe('auth and CSRF', () => {
     expect((await a.inject('/auth/me')).statusCode).toBe(401);
     expect((await a.inject({ url: '/auth/me', headers: { cookie: 'se_session=nothex' } })).statusCode).toBe(401);
   });
+  it('reads the session cookie next to cookies whose values contain = (#163)', async () => {
+    const a = await app();
+    const { cookie } = await login();
+    const sid = cookie.split('=')[1]!;
+    // Before #163, `split('=')` cut base64 values and a later duplicate could
+    // replace the session; both must leave the real session readable.
+    const headers = { cookie: `oauth=YWJjZA==; theme=a=b; se_session=${sid}; se_session=${'f'.repeat(64)}` };
+    const me = await a.inject({ url: '/auth/me', headers });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().login).toBe('alice');
+  });
   it('returns the profile and a CSRF token; expired sessions are refused', async () => {
     const a = await app();
     const { u, cookie } = await login();

@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { CopyButton } from '@/components/CopyButton';
+import { WalletReminder } from '@/components/WalletReminder';
 import { apiGet, apiGetResult, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
 
 interface Review { verdict: string; score: number; flags: string[] }
@@ -90,6 +92,7 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
         ))}
       </ol>
       {NOTICE[b.status] && <p className="notice">{NOTICE[b.status]}</p>}
+      <WalletReminder prAuthors={b.prs.map((p) => p.authorLogin)} />
 
       {b.criteria.length > 0 && (
         <>
@@ -131,7 +134,12 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
           {b.payouts.map((p, i) => (
             <li key={i}>
               <span>PR #{p.prNumber}: {PAYOUT[p.status] ?? p.status}</span>
-              {p.txHash && <a className="mono" href={explorerTx(p.txHash)} rel="noreferrer noopener">tx {p.txHash.slice(0, 8)}… ↗</a>}
+              {p.txHash && (
+                <span>
+                  <a className="mono" href={explorerTx(p.txHash)} rel="noreferrer noopener" title={p.txHash}>tx {p.txHash.slice(0, 8)}… ↗</a>
+                  <CopyButton value={p.txHash} label={`transaction hash for PR #${p.prNumber}`} />
+                </span>
+              )}
             </li>
           ))}
         </ul>

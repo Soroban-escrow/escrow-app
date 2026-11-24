@@ -389,6 +389,22 @@ Each group is optional. Leave it unset and that feature stays off.
 
 ---
 
+## Bot commands
+
+Comment these on GitHub; the first line of the comment is the command. The bot's `/bounty help`
+reply, the [docs page](apps/web/src/app/docs/page.tsx) and this table are all generated from
+[`COMMANDS`](packages/shared/src/command.ts) in `@skillescrow/shared`, and a test fails if this
+table no longer matches it.
+
+| Command | What it does | Who and where |
+|---|---|---|
+| `/bounty <amount> [USDC\|XLM] [<days>d]` e.g. `/bounty 50 USDC 14d` | Fund this issue. The bot replies with a funding link; the token defaults to USDC and the duration to 14 days. | Collaborators with write access, on an issue |
+| `/bounty dispute <reason>` e.g. `/bounty dispute the merged PR does not meet the criteria` | Flag a problem on a bountied issue for a human arbiter. | The bounty maintainer or an author of a linked PR, on an issue |
+| `/bounty review` | Queue a fresh AI review of this pull request against the bounty criteria. | Collaborators with write access, on a pull request |
+| `/bounty help` | List these commands. | Anyone, on an issue or pull request |
+
+---
+
 ## Commands
 
 | Command | What it does |

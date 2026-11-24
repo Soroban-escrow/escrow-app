@@ -1,13 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
-import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/freighter';
-import { money, formatAddress, type TokenInfo } from '@/lib/api';
-
-import { refundWindow, explorerTx, formatAddress } from '@/lib/api';
+import { explorerTx, formatAddress, money, refundWindow, type TokenInfo } from '@/lib/api';
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
- fresh-build
+import { CopyButton } from '@/components/CopyButton';
 
 interface Funded { id: string; issueTitle: string; amount: string; token: string; status: string; deadline: string }
 interface Me { login: string; wallet: string | null; csrfToken: string }
@@ -18,11 +14,8 @@ export default function Account() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
-
   const [submitted, setSubmitted] = useState<string | null>(null);
- fresh-build
 
   useEffect(() => {
     fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then(setMe, () => setMe(null));
@@ -84,20 +77,15 @@ export default function Account() {
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
       <h1>{me.login}</h1>
       <h2>Wallet</h2>
-      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
+      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code><CopyButton value={me.wallet} label="wallet address" /></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
       <button onClick={link} disabled={busy}>{busy ? 'Waiting for Freighter…' : me.wallet ? 'Change wallet' : 'Link wallet'}</button>
       {msg && <p role="status" className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
       <h2>Funded bounties</h2>
       {funded.length === 0 ? <p className="muted">Nothing funded from this wallet yet.</p> : funded.map((f) => (
         <div key={f.id} className="card">
           <div className="row"><a href={`/b/${f.id}`}>{f.issueTitle || `Bounty ${f.id}`}</a><span className="badge">{f.status}</span></div>
- feat/bounty-filters-api-config-wallet-e2e-contract-errors
           <div className="row muted"><span className="amount">{money(f.amount, f.token, tokens)}</span>
-            {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
-
-          <div className="row muted"><span className="amount">{fromBaseUnits(BigInt(f.amount), 7, 2)}</span>
             {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> {refundWindow(f.deadline).open ? <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button> : <small>{refundWindow(f.deadline).label}</small>}</span>}</div>
- fresh-build
         </div>
       ))}
       {submitted && <p className="muted" role="status">Tracking confirmation… <a href={explorerTx(submitted)} rel="noreferrer noopener">View transaction ↗</a></p>}

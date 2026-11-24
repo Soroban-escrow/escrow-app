@@ -1,4 +1,5 @@
 import { toBaseUnits } from './amounts.js';
+import { DEFAULT_DAYS } from './command-help.js';
 
 export type Command =
   | { kind: 'fund'; amount: bigint; token: 'USDC' | 'XLM'; days: number }
@@ -7,7 +8,9 @@ export type Command =
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
-export const DEFAULT_DAYS = 14;
+// DEFAULT_DAYS lives with the command metadata (which the web app imports on
+// its own); it is re-exported here so existing imports keep working.
+export { DEFAULT_DAYS };
 
 /** Parses the FIRST line of an issue comment. Returns null if it is not a /bounty command. */
 export function parseCommand(body: string): Command | null {

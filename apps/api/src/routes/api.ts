@@ -4,6 +4,7 @@ import { net } from '@skillescrow/shared';
 import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../auth/wallet.js';
 import type { IssueCommenter } from '../ops/reminders.js';
 import { COOKIE, csrfToken, csrfValid, destroySession, destroyAllSessions, getSessionUser, renewSessionIfNeeded } from '../auth/session.js';
+import { parseCookies } from '../auth/cookies.js';
 import { clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
 import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
@@ -47,8 +48,7 @@ export const listQuerySchema = z.object({
 });
 
 export function registerApi(app: FastifyInstance, d: ApiDeps) {
-  const cookies = (req: FastifyRequest) =>
-    Object.fromEntries((req.headers.cookie ?? '').split(';').map((c) => c.trim().split('=') as [string, string]).filter(([k]) => k));
+  const cookies = (req: FastifyRequest) => parseCookies(req.headers.cookie);
   const secure = d.login?.callbackUrl.startsWith('https://') ?? false;
 
   async function requireUser(req: Authed, reply: FastifyReply, mutating: boolean) {
