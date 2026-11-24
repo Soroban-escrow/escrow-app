@@ -33,7 +33,7 @@ async function login(githubId: bigint, isAdmin: boolean) {
   const u = await db.user.create({ data: { githubId, githubLogin: `u${githubId}`, isAdmin } });
   const cookie = `se_session=${(await createSession(db, u.id)).id}`;
   // the guard reads admin rights from config (adminGithubIds), not from the user row, so the test must grant them there too
-  const a = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain, commenter, adminGithubIds: isAdmin ? [githubId] : [] });
+  const a = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain, commenter, adminGithubIds: isAdmin ? [githubId] : [] });
   const csrf = (await a.inject({ url: '/auth/me', headers: { cookie } })).json().csrfToken as string;
   return { a, h: { cookie, 'x-csrf-token': csrf } };
 }

@@ -18,6 +18,7 @@ const store: DeliveryStore = {
     try { await db.webhookDelivery.create({ data: { id, event } }); return true; }
     catch (e) { if ((e as { code?: string }).code === 'P2002') return false; throw e; }
   },
+  remove: async (id) => { await db.webhookDelivery.deleteMany({ where: { id } }); },
   enqueue: (id, event, payload) => producer.enqueue(id, event, payload),
 };
 

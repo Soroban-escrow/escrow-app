@@ -30,7 +30,7 @@ const chain: FundingChain & AdminChain = {
   },
   getBounty: async () => ({ status: chainStatus }),
 };
-const app = () => buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain });
+const app = () => buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain });
 
 async function login(githubId: bigint, wallet: string | null = null) {
   const u = await db.user.create({ data: { githubId, githubLogin: `u${githubId}`, wallet } });

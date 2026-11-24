@@ -14,7 +14,7 @@ const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQ
 
 let linked: bigint[];
 const app = async (overrides: Partial<ApiDeps> = {}) =>
-  buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+  buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
     db,
     csrfSecret: cfg.CSRF_SECRET,
     onWalletLinked: async (g) => void linked.push(g),
@@ -183,7 +183,7 @@ describe('public reads', () => {
     expect((await a.inject('/filters')).json()).toEqual({ statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: ['TOKEN_A', 'TOKEN_B'], repositories: ['o/Other', 'o/Repo'] });
   });
   it('publishes live contract fee and token precision and limits', async () => {
-    const a = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+    const a = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
       db, csrfSecret: cfg.CSRF_SECRET, tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6 }],
       chain: {
         getConfig: async () => ({ fee_bps: 275, grace_secs: 3600n, min_duration_secs: 86400n, max_duration_secs: 2592000n }),

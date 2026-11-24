@@ -124,7 +124,7 @@ describe('session cookie clearing (#167)', () => {
 
 describe('over HTTP', () => {
   const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V', SESSION_SECRET: 's'.repeat(32), CSRF_SECRET: 'c'.repeat(32), GITHUB_WEBHOOK_SECRET: 'hooksecret', LOG_LEVEL: 'silent' });
-  const app = () => buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, login: deps({ now: undefined as never }) });
+  const app = () => buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, login: deps({ now: undefined as never }) });
 
   it('/auth/login redirects to GitHub and sets a state cookie; the callback sets the session cookie and redirects home', async () => {
     const a = await app();

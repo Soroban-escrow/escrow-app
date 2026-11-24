@@ -12,7 +12,7 @@ const base = {
   LOG_LEVEL: 'silent',
 };
 
-const store: DeliveryStore = { insert: async () => true, enqueue: async () => undefined };
+const store: DeliveryStore = { insert: async () => true, remove: async () => {}, enqueue: async () => undefined };
 
 describe('parseTrustProxy', () => {
   it.each([

@@ -14,7 +14,7 @@ const cfg = loadConfig({
 
 describe('openapi', () => {
   it('serves an OpenAPI 3.1 document generated from the route schemas', async () => {
-    const app = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} });
+    const app = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} });
     const r = await app.inject('/openapi.json');
     expect(r.statusCode).toBe(200);
     const doc = r.json() as typeof openApiDocument;

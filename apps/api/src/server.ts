@@ -10,6 +10,8 @@ import { openApiDocument } from './routes/openapi.js';
 export interface DeliveryStore {
   /** returns false if the delivery id was already seen */
   insert(id: string, event: string): Promise<boolean>;
+  /** forgets a delivery id whose enqueue failed, so the redelivery is processed instead of ignored */
+  remove(id: string): Promise<void>;
   enqueue(id: string, event: string, payload: unknown): Promise<void>;
 }
 
@@ -67,7 +69,19 @@ export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDe
       deliveryLog.info('duplicate webhook delivery ignored');
       return reply.code(200).send({ duplicate: true });
     }
-    await store.enqueue(id, event, payload);
+    try {
+      await store.enqueue(id, event, payload);
+    } catch (e) {
+      // The id was already stored as seen. Release it, or the redelivery would be acknowledged as a duplicate and the event lost.
+      deliveryLog.error({ err: e }, 'webhook enqueue failed; releasing delivery id for redelivery');
+      try {
+        await store.remove(id);
+      } catch (removeErr) {
+        deliveryLog.error({ err: removeErr }, 'could not release webhook delivery id; its redelivery will be treated as a duplicate');
+      }
+      // 5xx tells GitHub the delivery failed, so it is redelivered
+      return reply.code(503).send({ error: { code: 'queue_unavailable', message: 'webhook could not be queued; redeliver' } });
+    }
     deliveryLog.info('webhook delivery queued');
     return reply.code(202).send({ queued: true });
   });

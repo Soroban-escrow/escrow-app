@@ -79,7 +79,7 @@ const login: LoginDeps = {
   secret: 's'.repeat(32),
   adminGithubIds: [],
 };
-const app = () => buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain, login });
+const app = () => buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain, login });
 
 let githubId = 0n;
 async function credentials(isAdmin = false) {
