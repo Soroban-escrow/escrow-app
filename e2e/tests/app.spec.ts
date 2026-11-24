@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import pg from 'pg';
 import { E2E_DB } from '../playwright.config.js';
 import { FAKE_ADDRESS, installFakeWallet, mockConfig, TEST_PASSPHRASE } from '../fake-wallet.js';
@@ -9,6 +10,17 @@ const signIn = (page: Page, who: 'user' | 'admin') =>
   page.context().addCookies([{ name: 'se_session', value: sessions()[who], url: 'http://localhost:3100' }]);
 const noSideScroll = async (page: Page) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+test.describe('accessibility gate', () => {
+  for (const path of ['/me', '/fund/intent-open-0000001', '/admin']) {
+    test(`${path} has no critical axe violations`, async ({ page }) => {
+      await page.goto(path);
+      const results = await new AxeBuilder({ page }).analyze();
+      const critical = results.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious');
+      expect(critical, critical.map((v) => `${v.id}: ${v.help}`).join('\n')).toEqual([]);
+    });
+  }
+});
 
 test.describe('public pages', () => {
   test('home lists open bounties, newest first, with amounts and PR counts', async ({ page }) => {
@@ -71,6 +83,19 @@ test.describe('public pages', () => {
     await expect(page.getByText('3%')).toBeVisible();
     await page.goto('/install');
     await expect(page.getByRole('heading', { name: 'Install the GitHub App' })).toBeVisible();
+  });
+
+  test('status page renders reachability and indexer lag, linked from footer', async ({ page }) => {
+    await page.goto('/');
+    const statusLink = page.locator('footer').getByRole('link', { name: 'Status' });
+    await expect(statusLink).toBeVisible();
+    await statusLink.click();
+    await expect(page).toHaveURL('/status');
+    await expect(page.getByRole('heading', { name: 'Service Status' })).toBeVisible();
+    await expect(page.getByText('API Reachability')).toBeVisible();
+    await expect(page.getByText('Indexer Lag')).toBeVisible();
+    await expect(page.getByText('Last Updated')).toBeVisible();
+    await noSideScroll(page);
   });
 
   test('filters by token, status, repository, and combinations', async ({ page }) => {
@@ -169,7 +194,7 @@ async function freshDispute() {
   const db = new pg.Client({ connectionString: E2E_DB });
   await db.connect();
   await db.query(`DELETE FROM "Dispute"`);
-  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','requested',now()-interval '40 hours',now())`);
+  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','REQUESTED',now()-interval '40 hours',now())`);
   await db.end();
 }
 
@@ -281,7 +306,9 @@ test.describe('scripted Freighter signed flows', () => {
     test(`signs and submits a maintainer ${action} with CSRF protection`, async ({ page }) => {
       await installFakeWallet(page); await mockConfig(page);
       await page.route('**/api/auth/me', (r) => r.fulfill({ json: fakeMe({ wallet: FAKE_ADDRESS }) }));
-      await page.route('**/api/me/funded', (r) => r.fulfill({ json: [{ id: '1', issueTitle: 'Bounty one', amount: '500000000', token: 'CUSDCE2E', status: 'OPEN', deadline: new Date().toISOString() }] }));
+      // Refunds are only offered once the upstream grace window has passed.
+      const deadline = action === 'refund' ? new Date(Date.now() - 4 * 864e5).toISOString() : new Date().toISOString();
+      await page.route('**/api/me/funded', (r) => r.fulfill({ json: [{ id: '1', issueTitle: 'Bounty one', amount: '500000000', token: 'CUSDCE2E', status: 'OPEN', deadline }] }));
       let signedXdr: unknown, csrfHeader: string | undefined;
       await page.route(`**/api/bounties/1/${action}/build`, (r) => r.fulfill({ json: { xdr: `unsigned-${action}-xdr` } }));
       await page.route('**/api/tx/submit', (r) => { signedXdr = r.request().postDataJSON().xdr; csrfHeader = r.request().headers()['x-csrf-token']; return r.fulfill({ json: { hash: 'tx' } }); });

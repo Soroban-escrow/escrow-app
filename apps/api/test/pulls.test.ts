@@ -1,3 +1,4 @@
+import { PullRequestState } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
 import { handlePullRequest, parseClosingRefs, type PullRequestPayload } from '../src/github/pulls.js';
@@ -41,7 +42,7 @@ beforeEach(async () => {
 describe('handlePullRequest', () => {
   it('tracks an opened PR and triggers a review', async () => {
     expect(await handlePullRequest(deps(), pr('opened'))).toEqual([1n]);
-    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe('open');
+    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe(PullRequestState.OPEN);
     expect(reviews).toEqual([500n]);
   });
   it('skips drafts for review, PRs with no bounty, and bots', async () => {
@@ -65,7 +66,7 @@ describe('handlePullRequest', () => {
     await handlePullRequest(deps(), pr('synchronize', { head: { sha: 'zzz' } }));
     await handlePullRequest(deps(), pr('edited', { body: 'no closing refs' }));
     const rec = await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } });
-    expect(rec.state).toBe('merged');
+    expect(rec.state).toBe(PullRequestState.MERGED);
     expect(rec.headSha).toBe('abc');
     expect(await db.pullRequestBounty.count()).toBe(1);
   });
@@ -100,7 +101,7 @@ describe('handlePullRequest', () => {
     await handlePullRequest(deps(), pr('opened'));
     await handlePullRequest(deps(), pr('closed', { state: 'closed' }));
     expect(await db.payout.count()).toBe(0);
-    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe('closed');
+    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe(PullRequestState.CLOSED);
   });
 
   it('one PR can close several bounties: one PR row, one link per bounty, a payout for each on merge', async () => {

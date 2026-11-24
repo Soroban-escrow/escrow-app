@@ -1,6 +1,5 @@
 import { Client, type Bounty, type Config, type TokenLimits } from '@skillescrow/contract-client';
-import { Address, rpc, TransactionBuilder, Transaction } from '@stellar/stellar-sdk';
-import { SubmitTxError } from './errors.js';
+import { rpc, TransactionBuilder, Transaction } from '@stellar/stellar-sdk';
 
 export interface ChainConfig {
   rpcUrl: string;

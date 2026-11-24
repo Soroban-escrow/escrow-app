@@ -16,11 +16,16 @@ const sign = (body: string) => 'sha256=' + createHmac('sha256', 'hooksecret').up
 function fake() {
   const seen = new Set<string>();
   const queued: string[] = [];
+  const control = { failEnqueue: false };
   const store: DeliveryStore = {
     insert: async (id) => (seen.has(id) ? false : (seen.add(id), true)),
-    enqueue: async (id) => void queued.push(id),
+    remove: async (id) => void seen.delete(id),
+    enqueue: async (id) => {
+      if (control.failEnqueue) throw new Error('redis: connection refused');
+      queued.push(id);
+    },
   };
-  return { store, queued };
+  return { store, queued, control };
 }
 
 const post = (app: Awaited<ReturnType<typeof buildServer>>, body: string, headers: Record<string, string>) =>
@@ -58,6 +63,18 @@ describe('webhook', () => {
     expect((await post(app, body, h)).statusCode).toBe(202);
     expect((await post(app, body, h)).statusCode).toBe(200);
     expect(queued).toEqual(['d1']);
+  });
+  it('a failed enqueue is a 5xx and its redelivery is processed exactly once (#164)', async () => {
+    const { store, queued, control } = fake();
+    const app = await buildServer(loadConfig(env), store);
+    const h = { 'x-hub-signature-256': sign(body), 'x-github-delivery': 'd2', 'x-github-event': 'issues' };
+    control.failEnqueue = true;
+    expect((await post(app, body, h)).statusCode).toBe(503);
+    expect(queued).toEqual([]);
+    control.failEnqueue = false;
+    expect((await post(app, body, h)).statusCode).toBe(202); // GitHub redelivers after the 5xx
+    expect((await post(app, body, h)).statusCode).toBe(200); // any later redelivery is a duplicate
+    expect(queued).toEqual(['d2']);
   });
   it('health', async () => {
     const app = await buildServer(loadConfig(env), fake().store);

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { contractErrorName } from '../chain/errors.js';
 import type { Db } from '../db.js';
+import { chainError, err, type Authed } from './http.js';
 import { mutationLimit } from './limits.js';
 
 /** What the funding routes need from the chain; the real one is createChain(). */
@@ -21,15 +22,8 @@ export interface FundingDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
-type Authed = FastifyRequest & { user?: { id: string; githubId: bigint; wallet: string | null } };
-const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
-
-/** Turns a simulation failure into a stable, user-facing error (contract error name when we can find one). */
-function chainError(r: FastifyReply, e: unknown) {
-  const msg = e instanceof Error ? e.message : String(e);
-  const name = contractErrorName(msg);
-  return err(r, 422, name ? `contract_${name}` : 'chain_error', name ? `The contract rejected this: ${name}` : 'The network rejected this request.');
-}
+export const intentBuildSchema = z.object({ address: z.string(), relayerAllowed: z.boolean() });
+export const txSubmitSchema = z.object({ xdr: z.string().min(10).max(20_000), address: z.string().optional(), intentId: z.string().optional() });
 
 export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (mutating: boolean) => object) {
   const now = () => (d.now ?? (() => new Date()))();
@@ -50,10 +44,9 @@ export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (m
     };
   });
 
-  const build = z.object({ address: z.string(), relayerAllowed: z.boolean() });
   app.post('/intents/:id/build', { ...authed(true), ...limit }, async (req, reply) => {
     const u = (req as Authed).user!;
-    const body = build.safeParse(req.body);
+    const body = intentBuildSchema.safeParse(req.body);
     if (!body.success || !StrKey.isValidEd25519PublicKey(body.data.address)) return err(reply, 400, 'bad_request', 'a valid address and relayerAllowed are required');
     const i = await d.db.fundingIntent.findUnique({ where: { id: (req.params as { id: string }).id } });
     if (!i) return err(reply, 404, 'not_found', 'funding link not found');
@@ -71,9 +64,8 @@ export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (m
   });
 
   /** Relays a signed single-operation contract call. Never trusts client claims about the result. */
-  const submit = z.object({ xdr: z.string().min(10).max(20_000), address: z.string().optional(), intentId: z.string().optional() });
   app.post('/tx/submit', { ...authed(true), ...limit }, async (req, reply) => {
-    const body = submit.safeParse(req.body);
+    const body = txSubmitSchema.safeParse(req.body);
     if (!body.success) return err(reply, 400, 'bad_request', 'xdr required');
     // The client tells us which funding link it signed for. Only the link's owner can bind a
     // submission to it; otherwise a stray intentId could attribute someone else's bounty to them.
@@ -87,7 +79,15 @@ export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (m
     }
     let hash: string;
     try { hash = await d.chain.submitSigned(body.data.xdr, body.data.address); }
-    catch (e) { return err(reply, 422, 'submit_rejected', e instanceof Error ? e.message.slice(0, 200) : 'rejected'); }
+    catch (e) {
+      // Raw RPC text can expose node internals, so it is logged server-side only. The client gets a stable code.
+      const raw = e instanceof Error ? e.message : String(e);
+      req.log.warn({ rawError: raw }, 'transaction submit rejected');
+      const name = contractErrorName(raw);
+      return name
+        ? err(reply, 422, `contract_${name}`, `The contract rejected this: ${name}`)
+        : err(reply, 422, 'submit_rejected', 'The network rejected this transaction.');
+    }
     // Bind after the chain accepts the tx. Best effort: the indexer falls back to a fuzzy match
     // (with a warning) if the binding is missing. Never fail a successful submission over this.
     if (intent) {

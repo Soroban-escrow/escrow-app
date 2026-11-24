@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { fromBaseUnits, parseCommand } from '@skillescrow/shared';
+import { DisputeStatus } from '@prisma/client';
+import { formatCommandHelp, fromBaseUnits, parseCommand } from '@skillescrow/shared';
 import type { Db } from '../db.js';
 import { DISPUTE_REVIEW_HOURS } from '../disputes.js';
 
@@ -30,12 +31,8 @@ export interface IssueCommentPayload {
 }
 
 const WRITERS = new Set(['admin', 'maintain', 'write']);
-const HELP = [
-  '**SkillEscrow commands**',
-  '- `/bounty <amount> [USDC|XLM] [<days>d]` fund this issue, e.g. `/bounty 50 USDC 14d` (needs write access)',
-  '- `/bounty dispute <reason>` flag a problem on a bountied issue',
-  '- `/bounty help`',
-].join('\n');
+// Rendered from the shared command metadata, like the docs page (#135).
+const HELP = formatCommandHelp();
 
 /** Returns a short outcome string for logs/tests. Never throws on user error, only on infrastructure failure. */
 export async function handleIssueComment(d: CommandDeps, p: IssueCommentPayload): Promise<string> {
@@ -114,7 +111,7 @@ async function handleDispute(
     return await reply('Only the maintainer or an author of a linked PR can open a dispute.'), 'denied';
   }
   await d.db.dispute.create({
-    data: { bountyId: bounty.id, openedByGithubId: uid, openedByLogin: p.comment.user.login, reason: reason.slice(0, 2000), evidence: {}, status: 'requested' },
+    data: { bountyId: bounty.id, openedByGithubId: uid, openedByLogin: p.comment.user.login, reason: reason.slice(0, 2000), evidence: {}, status: DisputeStatus.REQUESTED },
   });
   await d.db.auditLog.create({ data: { actor: `github:${uid}`, action: 'dispute.requested', target: `bounty:${bounty.id}`, data: {} } });
   await reply(`Dispute recorded. A human will review this within ${DISPUTE_REVIEW_HOURS} hours.`);

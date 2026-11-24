@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
-import { explorerTx, formatAddress, money, type TokenInfo } from '@/lib/api';
+import { explorerTx, formatAddress, money, refundWindow, type TokenInfo } from '@/lib/api';
+import { CopyButton } from '@/components/CopyButton';
 import { ConfirmDialog } from './confirm-dialog';
 
 interface Funded {
@@ -10,6 +11,7 @@ interface Funded {
   deadline: string; winnerAddress?: string | null;
   payouts?: { winnerAddress: string | null }[];
 }
+interface Earning { id: string; status: string; prNumber: number; txHash: string | null; bounty: { issueTitle: string; amount: string; token: string; feeBps: number } }
 interface Me { login: string; wallet: string | null; csrfToken: string }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
 
@@ -19,12 +21,14 @@ export default function Account() {
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
+  const [earnings, setEarnings] = useState<Earning[]>([]);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ id: string; kind: 'release' | 'refund' } | null>(null);
 
   useEffect(() => {
     fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then(setMe, () => setMe(null));
     fetch('/api/me/funded').then((r) => (r.ok ? r.json() : [])).then(setFunded, () => setFunded([]));
+    fetch('/api/me/earnings').then((r) => (r.ok ? r.json() : [])).then(setEarnings, () => setEarnings([]));
     fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
   }, []);
 
@@ -93,7 +97,7 @@ export default function Account() {
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
       <h1>{me.login}</h1>
       <h2>Wallet</h2>
-      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
+      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code><CopyButton value={me.wallet} label="wallet address" /></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
       <button onClick={link} disabled={busy}>{busy ? 'Waiting for Freighter…' : me.wallet ? 'Change wallet' : 'Link wallet'}</button>
       {msg && <p role="status" className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
       <h2>Funded bounties</h2>
@@ -105,7 +109,9 @@ export default function Account() {
             {f.status === 'OPEN' && <span>
               <button disabled={busy} onClick={() => setConfirm({ id: f.id, kind: 'release' })}>Release</button>
               {' '}
-              <button className="ghost" disabled={busy} onClick={() => setConfirm({ id: f.id, kind: 'refund' })}>Refund</button>
+              {refundWindow(f.deadline).open
+                ? <button className="ghost" disabled={busy} onClick={() => setConfirm({ id: f.id, kind: 'refund' })}>Refund</button>
+                : <small>{refundWindow(f.deadline).label}</small>}
             </span>}
           </div>
         </div>
@@ -120,6 +126,8 @@ export default function Account() {
           onCancel={closeConfirm}
         />
       )}
+      <h2>Contributor earnings</h2>
+      {earnings.length === 0 ? <p className="muted">No contributor payouts yet.</p> : earnings.map((e) => <div className="card" key={e.id}><div className="row"><span>{e.bounty.issueTitle || `PR #${e.prNumber}`}</span><span className="badge">{e.status}</span></div><p className="muted amount">{money(e.bounty.amount, e.bounty.token, tokens)} · fee {(e.bounty.feeBps / 100).toFixed(2)}%</p>{e.txHash && <a className="mono" href={explorerTx(e.txHash)} rel="noreferrer noopener">View payout transaction ↗</a>}</div>)}
       {submitted && <p className="muted" role="status">Tracking confirmation… <a href={explorerTx(submitted)} rel="noreferrer noopener">View transaction ↗</a></p>}
       <p className="muted">We never ask for your secret key; you only sign a message in Freighter.</p>
     </>

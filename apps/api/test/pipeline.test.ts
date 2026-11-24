@@ -1,3 +1,4 @@
+import { PullRequestState } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { runPrReview, sanitizeReview, type ReviewGithub } from '../src/ai/pipeline.js';
 import type { ModelPort } from '../src/ai/review.js';
@@ -32,7 +33,7 @@ beforeEach(async () => {
   await db.bounty.create({ data: { id: 1n, repoId: 100n, issueNumber: 7, issueTitle: 'Retry', issueUrl: '', criteria: ['retries 3 times'], maintainer: 'GM', token: 'C', amount: '1', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
 });
 const pr = async (id: bigint, number: number) => {
-  await db.pullRequest.create({ data: { id, number, authorGithubId: 9n, authorLogin: 'c', headSha: 'x', state: 'open' } });
+  await db.pullRequest.create({ data: { id, number, authorGithubId: 9n, authorLogin: 'c', headSha: 'x', state: PullRequestState.OPEN } });
   await db.pullRequestBounty.create({ data: { prId: id, bountyId: 1n } });
 };
 

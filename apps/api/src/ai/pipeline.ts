@@ -1,3 +1,4 @@
+import { PullRequestState } from '@prisma/client';
 import type { Db } from '../db.js';
 import type { PullFile } from '../github/client.js';
 import { diffHash, rankPrs, renderReview, reviewPr, type ModelPort, type Rankable } from './review.js';
@@ -97,7 +98,7 @@ export async function runPrReview(d: ReviewDeps, prId: bigint, opts: { force?: b
 
   // rank among this bounty's open PRs by their latest review
   const siblings = await d.db.pullRequest.findMany({
-    where: { state: 'open', bounties: { some: { bountyId: bounty.id } } },
+    where: { state: PullRequestState.OPEN, bounties: { some: { bountyId: bounty.id } } },
     include: { reviews: { orderBy: { createdAt: 'desc' }, take: 1 } },
   });
   const rankables: Rankable[] = siblings.filter((p) => p.reviews[0]).map((p) => ({

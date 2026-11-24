@@ -1,13 +1,16 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { net } from '@skillescrow/shared';
 import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../auth/wallet.js';
 import type { IssueCommenter } from '../ops/reminders.js';
 import { COOKIE, csrfToken, csrfValid, destroySession, destroyAllSessions, getSessionUser, renewSessionIfNeeded } from '../auth/session.js';
-import { clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
+import { parseCookies } from '../auth/cookies.js';
+import { clearSessionCookie, clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
 import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
 import { registerAdmin, type AdminChain } from './admin.js';
 import { registerFunding, type FundingChain } from './funding.js';
+import { err, ser, type Authed } from './http.js';
 import { scheduleWalletFollowUp, type RetryOptions } from './wallet-followup.js';
 
 export interface ApiDeps {
@@ -31,14 +34,21 @@ export interface ApiDeps {
   commenter?: IssueCommenter;
 }
 
-const err = (r: FastifyReply, status: number, code: string, message: string) => r.code(status).send({ error: { code, message } });
-const ser = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? x.toString() : x)));
-
-type Authed = FastifyRequest & { sessionId?: string; user?: NonNullable<Awaited<ReturnType<typeof getSessionUser>>> };
+export const walletBodySchema = z.object({ address: z.string() });
+export const verifyBodySchema = z.object({ challengeId: z.string(), signature: z.string() });
+export const listQuerySchema = z.object({
+  status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED', 'ALL']).optional(),
+  token: z.string().optional(),
+  repo: z.string().max(200).optional(),
+  minAmount: z.string().regex(/^\d+$/).optional(),
+  q: z.string().max(100).optional(),
+  sort: z.enum(['newest', 'highest', 'ending']).default('newest'),
+  cursor: z.string().regex(/^\d{1,18}$/).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
 
 export function registerApi(app: FastifyInstance, d: ApiDeps) {
-  const cookies = (req: FastifyRequest) =>
-    Object.fromEntries((req.headers.cookie ?? '').split(';').map((c) => c.trim().split('=') as [string, string]).filter(([k]) => k));
+  const cookies = (req: FastifyRequest) => parseCookies(req.headers.cookie);
   const secure = d.login?.callbackUrl.startsWith('https://') ?? false;
 
   async function requireUser(req: Authed, reply: FastifyReply, mutating: boolean) {
@@ -83,17 +93,16 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   app.post('/auth/logout', authed(true), async (req, reply) => {
     await destroySession(d.db, (req as Authed).sessionId!);
-    return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
+    return reply.header('set-cookie', clearSessionCookie(secure)).send({ ok: true });
   });
 
   app.post('/auth/logout-all', authed(true), async (req, reply) => {
     await destroyAllSessions(d.db, (req as Authed).user!.id);
-    return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
+    return reply.header('set-cookie', clearSessionCookie(secure)).send({ ok: true });
   });
 
-  const walletBody = z.object({ address: z.string() });
   app.post('/wallet/challenge', { ...authed(true), ...mutationLimit }, async (req, reply) => {
-    const body = walletBody.safeParse(req.body);
+    const body = walletBodySchema.safeParse(req.body);
     if (!body.success) return err(reply, 400, 'bad_request', 'address required');
     try {
       return await createChallenge({ db: d.db }, (req as Authed).user!.id, body.data.address);
@@ -102,9 +111,8 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
       throw e;
     }
   });
-  const verifyBody = z.object({ challengeId: z.string(), signature: z.string() });
   app.post('/wallet/verify', { ...authed(true), ...mutationLimit }, async (req, reply) => {
-    const body = verifyBody.safeParse(req.body);
+    const body = verifyBodySchema.safeParse(req.body);
     if (!body.success) return err(reply, 400, 'bad_request', 'challengeId and signature required');
     const u = (req as Authed).user!;
     let result: Awaited<ReturnType<typeof verifyChallenge>>;
@@ -158,18 +166,8 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     return { statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: tokens.map((x) => x.token), repositories: repos.map((x) => x.fullName) };
   });
 
-  const listQuery = z.object({
-    status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED', 'ALL']).optional(),
-    token: z.string().optional(),
-    repo: z.string().max(200).optional(),
-    minAmount: z.string().regex(/^\d+$/).optional(),
-    q: z.string().max(100).optional(),
-    sort: z.enum(['newest', 'highest', 'ending']).default('newest'),
-    cursor: z.string().regex(/^\d{1,18}$/).optional(),
-    limit: z.coerce.number().int().min(1).max(50).default(20),
-  });
   app.get('/bounties', async (req, reply) => {
-    const p = listQuery.safeParse(req.query);
+    const p = listQuerySchema.safeParse(req.query);
     if (!p.success) return err(reply, 400, 'bad_request', 'invalid query');
     const f = p.data;
     const rows = await d.db.bounty.findMany({
@@ -201,6 +199,24 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     return ser({ ...b, prs: b.prs.map((l) => l.pr) }); // the API keeps returning a flat PR list
   });
 
+  app.post('/bounties/:id/dispute', { ...authed(true), ...mutationLimit }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!/^\d{1,18}$/.test(id)) return err(reply, 404, 'not_found', 'bounty not found');
+    const body = z.object({ reason: z.string().trim().min(3).max(2000) }).safeParse(req.body);
+    if (!body.success) return err(reply, 400, 'bad_request', 'a reason is required');
+    const u = (req as Authed).user!;
+    const bounty = await d.db.bounty.findUnique({ where: { id: BigInt(id) }, include: { prs: { include: { pr: true } } } });
+    if (!bounty) return err(reply, 404, 'not_found', 'bounty not found');
+    const contributor = bounty.prs.some((link) => link.pr.authorGithubId === u.githubId);
+    if (bounty.maintainerGithubId !== u.githubId && !contributor) return err(reply, 403, 'forbidden', 'only the maintainer or a linked contributor can request a dispute');
+    if (!['OPEN', 'DISPUTED'].includes(bounty.status)) return err(reply, 409, 'wrong_state', 'this bounty is no longer disputable');
+    const existing = await d.db.dispute.findFirst({ where: { bountyId: bounty.id, status: { in: ['requested', 'opened_onchain'] } } });
+    if (existing) return err(reply, 409, 'already_requested', 'a dispute is already being reviewed');
+    const dispute = await d.db.dispute.create({ data: { bountyId: bounty.id, openedByGithubId: u.githubId, reason: body.data.reason, evidence: {}, status: 'requested' } });
+    await d.db.auditLog.create({ data: { actor: `github:${u.githubId}`, action: 'dispute.requested', target: `bounty:${bounty.id}`, data: { source: 'web' } } });
+    return { id: dispute.id, status: dispute.status };
+  });
+
   app.get('/me/earnings', authed(false), async (req) => {
     const u = (req as Authed).user!;
     return ser(await d.db.payout.findMany({
@@ -225,7 +241,19 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     const paid = await d.db.payout.findMany({
       where: { winnerGithubId: u.githubId, status: 'CONFIRMED', bounty: { is: { repo: { is: { private: false } } } } },
       include: { bounty: { select: { id: true, token: true, amount: true, feeBps: true, issueTitle: true, issueUrl: true } } },
+      orderBy: { createdAt: 'desc' },
     });
-    return ser({ login: u.githubLogin, avatarUrl: u.avatarUrl, paid: paid.map((p) => ({ bounty: p.bounty, txHash: p.txHash })) });
+    const earned = new Map<string, bigint>();
+    for (const p of paid) {
+      earned.set(p.bounty.token, (earned.get(p.bounty.token) ?? 0n) + net(BigInt(p.bounty.amount), p.bounty.feeBps));
+    }
+    return ser({
+      login: u.githubLogin,
+      avatarUrl: u.avatarUrl,
+      paid: paid.map((p) => ({ bounty: p.bounty, txHash: p.txHash })),
+      earnedByToken: [...earned].map(([token, amount]) => ({ token, amount })),
+      paidCount: paid.length,
+      firstPayoutAt: paid.length ? paid.reduce((first, p) => p.createdAt < first ? p.createdAt : first, paid[0]!.createdAt) : null,
+    });
   });
 }

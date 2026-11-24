@@ -47,6 +47,8 @@ export function parseTrustProxy(raw: string): { ok: true; value: TrustProxy } | 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.string().default('info'),
+  // Dedicated high-entropy token for Prometheus. Without it /metrics is disabled.
+  METRICS_TOKEN: z.string().min(32).optional(),
   PORT: z.coerce.number().int().default(3001),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().default('redis://localhost:6379'),

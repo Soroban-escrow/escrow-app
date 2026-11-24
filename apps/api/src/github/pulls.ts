@@ -1,3 +1,4 @@
+import { PullRequestState } from '@prisma/client';
 import type { Db } from '../db.js';
 import { onMerge, type PayoutDeps } from '../payouts/payout.js';
 
@@ -30,7 +31,7 @@ export async function handlePullRequest(d: PullDeps, p: PullRequestPayload): Pro
   if (pr.user.type === 'Bot') return [];
   const prId = BigInt(pr.id);
   const existing = await d.db.pullRequest.findUnique({ where: { id: prId } });
-  if (existing?.state === 'merged') return []; // once merged, the record and its links are frozen
+  if (existing?.state === PullRequestState.MERGED) return []; // once merged, the record and its links are frozen
 
   const repoId = BigInt(p.repository.id);
   const issues = parseClosingRefs(pr.body, p.repository.full_name);
@@ -59,7 +60,7 @@ export async function handlePullRequest(d: PullDeps, p: PullRequestPayload): Pro
   if (eligible.length === 0) return [];
   const data = {
     number: pr.number, authorGithubId: BigInt(pr.user.id), authorLogin: pr.user.login,
-    headSha: pr.head.sha, state: pr.merged ? 'merged' : pr.state === 'closed' ? 'closed' : 'open',
+    headSha: pr.head.sha, state: pr.merged ? PullRequestState.MERGED : pr.state === 'closed' ? PullRequestState.CLOSED : PullRequestState.OPEN,
     mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
   };
   await d.db.pullRequest.upsert({ where: { id: prId }, create: { id: prId, ...data }, update: data });

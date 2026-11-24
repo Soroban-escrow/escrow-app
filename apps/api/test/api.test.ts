@@ -1,5 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { clearSessionCookie } from '../src/auth/github-login.js';
 import { sep53Hash } from '../src/auth/wallet.js';
 import { createSession } from '../src/auth/session.js';
 import { loadConfig } from '../src/config.js';
@@ -13,7 +14,7 @@ const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQ
 
 let linked: bigint[];
 const app = async (overrides: Partial<ApiDeps> = {}) =>
-  buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+  buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
     db,
     csrfSecret: cfg.CSRF_SECRET,
     onWalletLinked: async (g) => void linked.push(g),
@@ -53,6 +54,17 @@ describe('auth and CSRF', () => {
     expect((await a.inject('/auth/me')).statusCode).toBe(401);
     expect((await a.inject({ url: '/auth/me', headers: { cookie: 'se_session=nothex' } })).statusCode).toBe(401);
   });
+  it('reads the session cookie next to cookies whose values contain = (#163)', async () => {
+    const a = await app();
+    const { cookie } = await login();
+    const sid = cookie.split('=')[1]!;
+    // Before #163, `split('=')` cut base64 values and a later duplicate could
+    // replace the session; both must leave the real session readable.
+    const headers = { cookie: `oauth=YWJjZA==; theme=a=b; se_session=${sid}; se_session=${'f'.repeat(64)}` };
+    const me = await a.inject({ url: '/auth/me', headers });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().login).toBe('alice');
+  });
   it('returns the profile and a CSRF token; expired sessions are refused', async () => {
     const a = await app();
     const { u, cookie } = await login();
@@ -77,6 +89,18 @@ describe('auth and CSRF', () => {
     const t = await csrf(a, cookie);
     expect((await a.inject({ method: 'POST', url: '/auth/logout', headers: { cookie, 'x-csrf-token': t } })).statusCode).toBe(200);
     expect((await a.inject({ url: '/auth/me', headers: { cookie } })).statusCode).toBe(401);
+  });
+  it('logout clears the session cookie with the same Secure flag the login set (#167)', async () => {
+    const loginDeps = { db, clientId: 'Iv1.test', clientSecret: 'shh', callbackUrl: 'https://api.example.test/auth/callback', webUrl: 'https://example.test', secret: 's'.repeat(32), adminGithubIds: [] };
+    const a = await app({ login: loginDeps });
+    // each logout destroys its session, so each route gets a fresh one
+    for (const [url, n] of [['/auth/logout', 1n], ['/auth/logout-all', 2n]] as const) {
+      const { cookie } = await login(`user${n}`, n);
+      const t = await csrf(a, cookie);
+      const r = await a.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': t } });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['set-cookie']).toBe(clearSessionCookie(true));
+    }
   });
 });
 
@@ -143,6 +167,8 @@ describe('public reads', () => {
     expect((await a.inject('/bounties?sort=ending')).json().items[0].id).toBe('1');
     expect((await a.inject('/bounties?minAmount=2500')).json().items).toHaveLength(1);
     expect((await a.inject('/bounties?q=issue%202')).json().items).toHaveLength(1);
+    expect((await a.inject('/bounties?q=ISSUE%202')).json().items).toHaveLength(1);
+    expect((await a.inject('/bounties?q=o%2Frepo')).json().items).toHaveLength(3);
     expect((await a.inject('/bounties?status=RELEASED')).json().items).toHaveLength(1);
     expect((await a.inject('/bounties?status=bogus')).statusCode).toBe(400);
   });
@@ -157,7 +183,7 @@ describe('public reads', () => {
     expect((await a.inject('/filters')).json()).toEqual({ statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: ['TOKEN_A', 'TOKEN_B'], repositories: ['o/Other', 'o/Repo'] });
   });
   it('publishes live contract fee and token precision and limits', async () => {
-    const a = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+    const a = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
       db, csrfSecret: cfg.CSRF_SECRET, tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6 }],
       chain: {
         getConfig: async () => ({ fee_bps: 275, grace_secs: 3600n, min_duration_secs: 86400n, max_duration_secs: 2592000n }),
@@ -181,13 +207,25 @@ describe('public reads', () => {
     const a = await app();
     const { u, cookie } = await login();
     await bounty(1n); await bounty(2n);
-    await db.payout.create({ data: { bountyId: 1n, prNumber: 1, winnerGithubId: u.githubId, status: 'CONFIRMED', idempotencyKey: 'release:1', txHash: 'H' } });
+    await bounty(3n, { token: 'TOKEN_B', amount: '2000', feeBps: 0 });
+    const first = new Date('2026-01-03T00:00:00.000Z');
+    const second = new Date('2026-02-04T00:00:00.000Z');
+    await db.payout.create({ data: { bountyId: 1n, prNumber: 1, winnerGithubId: u.githubId, status: 'CONFIRMED', idempotencyKey: 'release:1', txHash: 'H', createdAt: second } });
+    await db.payout.create({ data: { bountyId: 3n, prNumber: 1, winnerGithubId: u.githubId, status: 'CONFIRMED', idempotencyKey: 'release:3', createdAt: first } });
     await db.payout.create({ data: { bountyId: 2n, prNumber: 1, winnerGithubId: u.githubId, status: 'QUEUED', idempotencyKey: 'release:2' } });
     expect((await a.inject('/me/earnings')).statusCode).toBe(401);
-    expect((await a.inject({ url: '/me/earnings', headers: { cookie } })).json()).toHaveLength(2);
+    expect((await a.inject({ url: '/me/earnings', headers: { cookie } })).json()).toHaveLength(3);
     const pub = (await a.inject('/users/ALICE')).json();
-    expect(pub.paid).toHaveLength(1);
+    expect(pub.paid).toHaveLength(2);
     expect(pub.paid[0].txHash).toBe('H');
+    expect(pub.earnedByToken).toEqual([{ token: 'C', amount: '970' }, { token: 'TOKEN_B', amount: '2000' }]);
+    expect(pub.paidCount).toBe(2);
+    expect(pub.firstPayoutAt).toBe(first.toISOString());
+    await db.payout.deleteMany({ where: { winnerGithubId: u.githubId } });
+    const empty = (await a.inject('/users/ALICE')).json();
+    expect(empty.earnedByToken).toEqual([]);
+    expect(empty.paidCount).toBe(0);
+    expect(empty.firstPayoutAt).toBeNull();
     expect((await a.inject('/users/nobody')).statusCode).toBe(404);
   });
 });

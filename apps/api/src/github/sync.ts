@@ -1,4 +1,5 @@
 import type { Db } from '../db.js';
+import { DisputeStatus } from '@prisma/client';
 import { fromBaseUnits, net } from '@skillescrow/shared';
 import { labelFor, renderCard } from './card.js';
 import { parseCriteria } from './criteria.js';
@@ -116,7 +117,7 @@ export interface RejectionNotifyDeps {
  */
 export async function notifyDisputeRejected(d: RejectionNotifyDeps, disputeId: string): Promise<'sent' | 'failed' | 'skipped'> {
   const dispute = await d.db.dispute.findUnique({ where: { id: disputeId } });
-  if (!dispute || dispute.status !== 'rejected') return 'skipped';
+  if (!dispute || dispute.status !== DisputeStatus.REJECTED) return 'skipped';
   const target = `dispute:${dispute.id}`;
   if (await d.db.auditLog.findFirst({ where: { action: REJECT_NOTIFIED_ACTION, target } })) return 'skipped';
   const body = await rejectionCommentBody(d.db, dispute);
@@ -134,7 +135,7 @@ export async function notifyDisputeRejected(d: RejectionNotifyDeps, disputeId: s
 
 /** Re-attempts rejections whose follow-up never reached GitHub. Driven by the worker's timer. */
 export async function retryPendingRejectComments(d: RejectionNotifyDeps): Promise<string[]> {
-  const rejected = await d.db.dispute.findMany({ where: { status: 'rejected' }, select: { id: true } });
+  const rejected = await d.db.dispute.findMany({ where: { status: DisputeStatus.REJECTED }, select: { id: true } });
   const sent = await d.db.auditLog.findMany({ where: { action: REJECT_NOTIFIED_ACTION }, select: { target: true } });
   const done = new Set(sent.map((s) => s.target));
   const retried: string[] = [];
@@ -169,4 +170,23 @@ export async function announcePayout(d: SyncDeps & { explorerTx: (hash: string) 
   await d.gh.postComment(b.repo.installationId, b.repo.fullName, payout?.prNumber ?? b.issueNumber, body);
   await d.db.auditLog.create({ data: { actor: 'system', action: 'payout.announced', target, data: { tx: b.closeTx } } });
   return 'announced';
+}
+
+/**
+ * Processes a coalesced applied batch for a single bounty: refreshes the card once,
+ * and announces the payout only if a released event is present in the batch.
+ */
+export function handleApplied(
+  sync: SyncDeps,
+  explorerTxTemplate: string,
+  log?: (msg: string, extra?: unknown) => void,
+) {
+  return ({ bountyId, kinds, kind }: { bountyId: bigint; kinds?: string[]; kind?: string }) => {
+    const fail = (what: string) => (e: unknown) => log?.(`${what} failed`, e instanceof Error ? e.message : String(e));
+    const list = kinds ?? (kind ? [kind] : []);
+    if (list.includes('released')) {
+      void announcePayout({ ...sync, explorerTx: (h) => explorerTxTemplate.replace('{hash}', encodeURIComponent(h)) }, bountyId).catch(fail('payout announcement'));
+    }
+    void refreshBountyCard(sync, bountyId).catch(fail('card refresh'));
+  };
 }

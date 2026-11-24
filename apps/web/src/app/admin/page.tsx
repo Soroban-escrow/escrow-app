@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
-import { connect, signTx, WalletUxError } from '@/lib/freighter';
+import { connect, signTx, WalletUxError } from '@/lib/wallet';
 import { money, formatAddress, type TokenInfo } from '@/lib/api';
 
 interface Dispute { id: string; status: string; reason: string; createdAt: string; overdue: boolean; resolutionNote: string | null; bounty: { id: string; issueTitle: string; amount: string; token: string; maintainer: string; repo: { fullName: string }; prs: { number: number; authorLogin: string; reviews: { verdict: string; score: number }[] }[] } }
