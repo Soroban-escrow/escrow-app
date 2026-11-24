@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { daysLeft, money, refundWindow, totals } from './api';
+import { daysLeft, money, totals, refundWindow } from './api';
 
 describe('formatting', () => {
   it('uses API token precision and never guesses precision for an unknown token', () => {

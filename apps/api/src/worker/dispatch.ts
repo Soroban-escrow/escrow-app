@@ -1,15 +1,17 @@
-import type { Prisma } from '@prisma/client';
+import { PullRequestState, type Prisma } from '@prisma/client';
 import type { Db } from '../db.js';
 import { issueUrlPrefix } from '../github/issue-url.js';
-import { parseCriteria } from '../github/criteria.js';
+import { parseCriteria, criteriaChanged, formatCriteriaChangeComment, CRITERIA_CHANGED_ACTION } from '../github/criteria.js';
 import { replayUntrackedFunds } from '../indexer/replay.js';
 import { handleIssueComment, type CommandDeps, type IssueCommentPayload } from '../github/commands.js';
 import { handlePullRequest, type PullDeps, type PullRequestPayload } from '../github/pulls.js';
+import type { Notifier } from '../payouts/ports.js';
 
 export interface DispatchDeps {
   db: Db;
   commands: CommandDeps;
   pulls: PullDeps;
+  notifier?: Notifier;
   /** Re-renders a bounty's GitHub card after the issue changes (wired in worker/main.ts). */
   refreshCard: (bountyId: bigint) => Promise<unknown>;
   log?: (msg: string, extra?: unknown) => void;
@@ -30,6 +32,7 @@ interface IssuesPayload {
   action: string;
   repository: { id: number };
   issue: { number: number; title: string; body: string | null };
+  sender?: { id: number; login?: string };
 }
 
 async function upsertRepos(db: Db, installationId: bigint, repos: { id: number; full_name: string; private: boolean }[] = []) {
@@ -101,11 +104,54 @@ export async function dispatchWebhook(d: DispatchDeps, event: string, payload: u
       const p = payload as IssuesPayload;
       if (p.action !== 'edited') return 'ignored';
       const where: Prisma.BountyWhereInput = { repoId: BigInt(p.repository.id), issueNumber: p.issue.number, status: { in: ['OPEN', 'DISPUTED'] } };
-      const affected = await d.db.bounty.findMany({ where, select: { id: true } });
+      const affected = await d.db.bounty.findMany({ where, select: { id: true, criteria: true, status: true } });
       if (affected.length) {
+        const newCriteria = parseCriteria(p.issue.body);
+        const notifier = d.notifier ?? d.pulls?.notifier;
+
+        for (const b of affected) {
+          if (b.status === 'OPEN' && criteriaChanged(b.criteria, newCriteria)) {
+            await d.db.auditLog.create({
+              data: {
+                actor: p.sender?.id ? `github:${p.sender.id}` : 'system',
+                action: CRITERIA_CHANGED_ACTION,
+                target: `bounty:${b.id}`,
+                data: {
+                  old: b.criteria,
+                  new: newCriteria,
+                  oldCriteria: b.criteria,
+                  newCriteria,
+                },
+              },
+            });
+
+            if (notifier) {
+              const openPrs = await d.db.pullRequest.findMany({
+                where: {
+                  state: PullRequestState.OPEN,
+                  bounties: { some: { bountyId: b.id } },
+                },
+                select: { number: true },
+              });
+              const comment = formatCriteriaChangeComment(b.criteria, newCriteria);
+              for (const pr of openPrs) {
+                try {
+                  await notifier.notify(b.id, pr.number, comment);
+                } catch (e) {
+                  d.log?.('criteria change notification failed', {
+                    bountyId: String(b.id),
+                    prNumber: pr.number,
+                    error: e instanceof Error ? e.message : String(e),
+                  });
+                }
+              }
+            }
+          }
+        }
+
         await d.db.bounty.updateMany({
           where: { id: { in: affected.map((b) => b.id) } },
-          data: { issueTitle: p.issue.title, criteria: parseCriteria(p.issue.body) },
+          data: { issueTitle: p.issue.title, criteria: newCriteria },
         });
         // The DB now has the new title/criteria; push them to the card immediately instead of
         // waiting for the next chain event. A failure on one bounty must not block the others.
