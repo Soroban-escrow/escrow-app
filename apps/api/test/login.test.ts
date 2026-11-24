@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { finishLogin, LoginError, safeNext, startLogin, type LoginDeps } from '../src/auth/github-login.js';
+import { clearSessionCookie, finishLogin, LoginError, safeNext, sessionCookie, startLogin, type LoginDeps } from '../src/auth/github-login.js';
 import { createDb } from '../src/db.js';
 import { loadConfig } from '../src/config.js';
 import { buildServer } from '../src/server.js';
@@ -99,6 +99,26 @@ describe('login flow', () => {
   it('only ever redirects to a relative path on our own site', () => {
     expect(safeNext('/fund/abc?x=1')).toBe('/fund/abc?x=1');
     for (const bad of ['https://evil.test', '//evil.test', '/\\evil.test', 'javascript:alert(1)', '', undefined, 42, '/' + 'a'.repeat(300), '/a b']) expect(safeNext(bad)).toBe('/me');
+  });
+});
+
+describe('session cookie clearing (#167)', () => {
+  // everything but the value and Max-Age, which legitimately differ between set and clear
+  const attributes = (header: string) => header.split(';').slice(1).map((a) => a.trim()).filter((a) => !a.startsWith('Max-Age')).sort();
+
+  it('the clear header carries the same attributes as the set header', () => {
+    for (const secure of [true, false]) {
+      const set = sessionCookie('abc', 3600, secure);
+      const clear = clearSessionCookie(secure);
+      expect(clear.split(';')[0]).toBe('se_session=');
+      expect(clear).toContain('Max-Age=0');
+      expect(attributes(clear)).toEqual(attributes(set));
+    }
+  });
+  it('is Secure exactly when the set header is', () => {
+    expect(sessionCookie('abc', 3600, true)).toContain('; Secure');
+    expect(clearSessionCookie(true)).toContain('; Secure');
+    expect(clearSessionCookie(false)).not.toContain('Secure');
   });
 });
 
