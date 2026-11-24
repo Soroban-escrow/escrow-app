@@ -3,6 +3,10 @@ import { apiGet, explorerTx, money, type TokenInfo } from '@/lib/api';
 
 export default async function Profile({ params }: { params: Promise<{ login: string }> }) {
   const { login } = await params;
+ feat/bounty-metadata-ai-accessibility
+  const [u, config] = await Promise.all([
+    apiGet<{ login: string; paid: { bounty: { id: string; issueTitle: string; amount: string; token: string }; txHash: string | null }[] }>(`/users/${encodeURIComponent(login)}`),
+
   const normalized = login.toLowerCase();
   const [u, config] = await Promise.all([
     apiGet<{
@@ -12,6 +16,7 @@ export default async function Profile({ params }: { params: Promise<{ login: str
       paidCount: number;
       firstPayoutAt: string | null;
     }>(`/users/${encodeURIComponent(normalized)}`),
+ fresh-build
     apiGet<{ tokens: TokenInfo[] }>('/config'),
   ]);
   if (!u) notFound();

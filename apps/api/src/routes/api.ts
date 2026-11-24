@@ -161,6 +161,20 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
       d.db.bounty.findMany({ distinct: ['token'], select: { token: true }, orderBy: { token: 'asc' } }),
     ]);
     return { statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: tokens.map((x) => x.token), repositories: repos.map((x) => x.fullName) };
+ feat/bounty-metadata-ai-accessibility
+  });
+
+  const listQuery = z.object({
+    status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED', 'ALL']).optional(),
+    token: z.string().optional(),
+    repo: z.string().max(200).optional(),
+    minAmount: z.string().regex(/^\d+$/).optional(),
+    q: z.string().max(100).optional(),
+    sort: z.enum(['newest', 'highest', 'ending']).default('newest'),
+    cursor: z.string().regex(/^\d{1,18}$/).optional(),
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+
+ fresh-build
   });
 
   app.get('/bounties', async (req, reply) => {

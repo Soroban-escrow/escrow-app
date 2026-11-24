@@ -18,14 +18,21 @@ export async function apiGet<T>(path: string): Promise<T | null> {
   }
 }
 
+ feat/bounty-metadata-ai-accessibility
+
  feat/bounty-disputes-funding-earnings-wallet
 
+ fresh-build
 export function symbolFor(token: string, tokens: TokenInfo[] = []): string {
   const configured = tokens.find((item) => item.address === token)?.symbol;
   if (configured) return configured;
   if (process.env.NEXT_PUBLIC_TOKEN_USDC === token) return 'USDC';
   if (process.env.NEXT_PUBLIC_TOKEN_XLM === token) return 'XLM';
   return `${token.slice(0, 4)}…`;
+ feat/bounty-metadata-ai-accessibility
+}
+
+
 }
 
  fresh-build
@@ -56,12 +63,17 @@ export function symbolFor(token: string): string {
 
 
  fresh-build
+ fresh-build
 export function money(amount: string, token: string, tokens: TokenInfo[] = []): string {
   const info = tokens.find((item) => item.address === token) ?? (
     process.env.NEXT_PUBLIC_TOKEN_USDC === token ? { address: token, symbol: 'USDC', decimals: 7 } :
     process.env.NEXT_PUBLIC_TOKEN_XLM === token ? { address: token, symbol: 'XLM', decimals: 7 } : undefined
   );
+ feat/bounty-metadata-ai-accessibility
+  return info ? `${fromBaseUnits(BigInt(amount), info.decimals, 2)} ${info.symbol}` : `${amount} ${symbolFor(token, tokens)} (unknown token)`;
+
   return info ? `${fromBaseUnits(BigInt(amount), info.decimals, 2)} ${info.symbol}` : `${amount} ${symbolFor(token)} (unknown token)`;
+ fresh-build
 }
 
 export function daysLeft(deadline: string, now = Date.now()): string {

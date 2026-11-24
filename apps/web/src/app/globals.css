@@ -234,6 +234,11 @@ button.ghost { background: transparent; color: var(--ink); border-color: var(--l
 .criteria { list-style: none; margin: 0; padding: 0; counter-reset: c; }
 .criteria li { counter-increment: c; display: grid; grid-template-columns: 2.25rem 1fr; padding: 0.7rem 0; border-bottom: 1px solid var(--line); }
 .criteria li::before { content: counter(c, decimal-leading-zero); font-family: var(--mono); font-size: 0.8rem; color: var(--muted); padding-top: 0.15rem; }
+.criterion-reviews { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.5rem; font-size: 0.82rem; color: var(--muted); }
+.criterion-result { padding-left: 0.6rem; border-left: 2px solid var(--line); }
+.criterion-result.met { border-color: var(--ok); }
+.criterion-result.partial, .criterion-result.unclear { border-color: var(--amber); }
+.criterion-result.not_met { border-color: var(--red); }
 
 .prs { list-style: none; margin: 0; padding: 0; }
 .card.pr-row { display: grid; grid-template-columns: 2.25rem minmax(0, 1fr) auto; align-items: center; gap: 0.4rem 0.9rem; }

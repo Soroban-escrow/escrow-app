@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import pg from 'pg';
 import { E2E_DB } from '../playwright.config.js';
 import { FAKE_ADDRESS, installFakeWallet, mockConfig, TEST_PASSPHRASE } from '../fake-wallet.js';
@@ -9,6 +10,17 @@ const signIn = (page: Page, who: 'user' | 'admin') =>
   page.context().addCookies([{ name: 'se_session', value: sessions()[who], url: 'http://localhost:3100' }]);
 const noSideScroll = async (page: Page) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+test.describe('accessibility gate', () => {
+  for (const path of ['/me', '/fund/intent-open-0000001', '/admin']) {
+    test(`${path} has no critical axe violations`, async ({ page }) => {
+      await page.goto(path);
+      const results = await new AxeBuilder({ page }).analyze();
+      const critical = results.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious');
+      expect(critical, critical.map((v) => `${v.id}: ${v.help}`).join('\n')).toEqual([]);
+    });
+  }
+});
 
 test.describe('public pages', () => {
   test('home lists open bounties, newest first, with amounts and PR counts', async ({ page }) => {
@@ -73,6 +85,8 @@ test.describe('public pages', () => {
     await expect(page.getByRole('heading', { name: 'Install the GitHub App' })).toBeVisible();
   });
 
+ feat/bounty-metadata-ai-accessibility
+
   test('status page renders reachability and indexer lag, linked from footer', async ({ page }) => {
     await page.goto('/');
     const statusLink = page.locator('footer').getByRole('link', { name: 'Status' });
@@ -86,6 +100,7 @@ test.describe('public pages', () => {
     await noSideScroll(page);
   });
 
+ fresh-build
   test('filters by token, status, repository, and combinations', async ({ page }) => {
     await page.goto('/');
     await page.getByLabel('Token').selectOption('CUSDCE2E');
@@ -208,7 +223,11 @@ test.describe('admin', () => {
 });
 
 const fakeMe = (over: object = {}) => ({ id: 'u55', login: 'maint', wallet: null, isAdmin: false, csrfToken: 'csrf-scripted', ...over });
+ feat/bounty-metadata-ai-accessibility
+const fakeDispute = (status: 'requested' | 'opened_onchain') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
+
 const fakeDispute = (status: 'REQUESTED' | 'OPENED_ONCHAIN') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
+ fresh-build
 const fakeStatus = { indexerLedger: 1, failedPayouts: 0, waitingPayouts: 0, openDisputes: 1 };
 
 test.describe('scripted Freighter signed flows', () => {
@@ -347,6 +366,8 @@ test.describe('scripted Freighter signed flows', () => {
     await expect(page.getByRole('status')).toContainText('a winner address is required when winnerBps > 0'); expect(built).toBe(false);
   });
 });
+ feat/bounty-metadata-ai-accessibility
+
 
 test.describe('public profile page', () => {
   test('shows paid bounties with tokens and explorer links', async ({ page }) => {
@@ -448,3 +469,4 @@ test.describe('address truncation on small screens', () => {
     await noSideScroll(page);
   });
 });
+ fresh-build

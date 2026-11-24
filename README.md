@@ -441,9 +441,13 @@ falling back to per IP.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+ feat/bounty-metadata-ai-accessibility
+| `GET` | `/health` | — | db, RPC, Redis, indexer lag (503 when unhealthy) |
+
 | `GET` | `/livez` | — | liveness: process only, always 200 while the server is up |
 | `GET` | `/readyz` | — | readiness: db, RPC, Redis, indexer lag (503 when unhealthy) |
 | `GET` | `/health` | — | alias of `/readyz` |
+ fresh-build
 | `GET` | `/config` | — | live escrow fee, duration settings, and allowed token metadata/limits |
 | `GET` | `/filters` | — | available bounty statuses, tokens, and repositories |
 | `GET` | `/auth/login`, `/auth/callback` | — | GitHub OAuth (PKCE) |

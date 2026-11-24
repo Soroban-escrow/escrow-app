@@ -1,6 +1,9 @@
 export const metadata = { title: 'How it works · SkillEscrow' };
 
+ feat/bounty-metadata-ai-accessibility
+
 import { CommandReference } from '@/components/CommandReference';
+ fresh-build
 import { apiGet } from '@/lib/api';
 
 export default async function Docs() {
