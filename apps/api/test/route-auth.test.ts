@@ -15,7 +15,7 @@ import { buildServer } from '../src/server.js';
  *
  * Adding a route without adding it to this table fails the "matches the registered routes" test.
  */
-type Level = 'public' | 'user' | 'user+csrf' | 'admin';
+type Level = 'public' | 'user' | 'user+csrf' | 'admin' | 'metrics';
 interface Route {
   method: 'GET' | 'POST' | 'DELETE';
   path: string;
@@ -26,6 +26,7 @@ const routes: Route[] = [
   { method: 'GET', path: '/readyz', level: 'public' },
   { method: 'GET', path: '/health', level: 'public' },
   { method: 'GET', path: '/openapi.json', level: 'public' },
+  { method: 'GET', path: '/metrics', level: 'metrics' },
   // The webhook's credential is an HMAC signature instead of a session.
   { method: 'POST', path: '/github/webhooks', level: 'user' },
   { method: 'GET', path: '/auth/login', level: 'public' },
@@ -59,7 +60,7 @@ const routes: Route[] = [
 
 const db = createDb(process.env.TEST_DATABASE_URL ?? 'postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test');
 afterAll(() => db.$disconnect());
-const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V', SESSION_SECRET: 's'.repeat(32), CSRF_SECRET: 'c'.repeat(32), GITHUB_WEBHOOK_SECRET: 'hooksecret', LOG_LEVEL: 'silent' });
+const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V', SESSION_SECRET: 's'.repeat(32), CSRF_SECRET: 'c'.repeat(32), GITHUB_WEBHOOK_SECRET: 'hooksecret', METRICS_TOKEN: 'm'.repeat(40), LOG_LEVEL: 'silent' });
 
 const chain: NonNullable<ApiDeps['chain']> = {
   buildFundTx: async () => 'x',
@@ -148,6 +149,13 @@ describe('route authentication matrix', () => {
 
     // No credential is always rejected with 401 (an invalid signature for the webhook).
     expect((await call(a, route)).statusCode, `${label} without credentials`).toBe(401);
+
+    if (route.level === 'metrics') {
+      expect((await call(a, route, { authorization: 'Bearer invalid' })).statusCode).toBe(401);
+      // Valid token gets through authentication; the test server intentionally has no collector.
+      expect((await call(a, route, { authorization: 'Bearer ' + cfg.METRICS_TOKEN })).statusCode).toBe(503);
+      return;
+    }
 
     if (route.path === '/github/webhooks') {
       expect((await call(a, route, { 'x-hub-signature-256': 'sha256=deadbeef' })).statusCode, `${label} bad signature`).toBe(401);

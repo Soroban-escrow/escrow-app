@@ -43,8 +43,12 @@ export async function collectAlerts(a: AlertInputs): Promise<string[]> {
   return out;
 }
 
-/** Sends alerts to the webhook, at most once per message per cooldown. */
-export function alertSender(url: string | undefined, log: (m: string, x?: unknown) => void, cooldownMs = HOUR_MS, fetchImpl: typeof fetch = fetch) {
+/** Shared cooldown contract used by in-memory and Redis alert stores. */
+export interface AlertCooldownStore {
+  claim(message: string, now: number, cooldownMs: number): Promise<boolean>;
+}
+export const ALERT_COOLDOWN_MS = HOUR_MS;
+export function memoryCooldown(): AlertCooldownStore {
   const sent = new Map<string, number>();
   return {
     async claim(message, now, cooldownMs) {
@@ -81,7 +85,7 @@ export function redisCooldown(redis: RedisCooldownClient): AlertCooldownStore {
 export function alertSender(
   url: string | undefined,
   log: (m: string, x?: unknown) => void,
-  cooldownMs = HOURS,
+  cooldownMs = ALERT_COOLDOWN_MS,
   fetchImpl: typeof fetch = fetch,
   store: AlertCooldownStore = memoryCooldown(),
 ) {

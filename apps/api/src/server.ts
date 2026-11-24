@@ -1,3 +1,4 @@
+import { authorizedMetricsRequest } from './ops/metrics.js';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -15,7 +16,7 @@ export interface DeliveryStore {
   enqueue(id: string, event: string, payload: unknown): Promise<void>;
 }
 
-export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDeps, health?: () => Promise<{ ok: boolean }>): Promise<FastifyInstance> {
+export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDeps, health?: () => Promise<{ ok: boolean }>, metrics?: () => Promise<string>): Promise<FastifyInstance> {
   // trustProxy makes req.ip the real client (from X-Forwarded-For) rather than the proxy, which the global and
   // anonymous rate limits key on. Without it every user behind Render/Vercel shares one limit.
   const app = Fastify({
@@ -44,6 +45,21 @@ export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDe
   app.get('/readyz', readiness);
   // Kept for existing monitors and docs; same as /readyz.
   app.get('/health', readiness);
+  // Monitoring is always authenticated. No configured token means a disabled endpoint.
+  // Avoid returning partial or stale series when the DB, Redis or RPC is unavailable.
+  app.get('/metrics', { config: { rateLimit: false } }, async (req, reply) => {
+    if (!cfg.METRICS_TOKEN) return reply.code(503).send('metrics not configured');
+    if (!authorizedMetricsRequest(cfg.METRICS_TOKEN, req.headers.authorization)) {
+      return reply.header('www-authenticate', 'Bearer realm="metrics"').code(401).send('unauthorized');
+    }
+    if (!metrics) return reply.code(503).send('metrics collector not configured');
+    try {
+      return reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8').send(await metrics());
+    } catch (error) {
+      req.log.error({ err: error }, 'metrics collection failed');
+      return reply.code(503).send('metrics unavailable');
+    }
+  });
   app.get('/openapi.json', async () => openApiDocument);
   if (api) registerApi(app, api);
 
