@@ -1,5 +1,9 @@
 export const metadata = { title: 'How it works · SkillEscrow' };
 
+ feat/bounty-metadata-ai-accessibility
+
+import { CommandReference } from '@/components/CommandReference';
+ fresh-build
 import { apiGet } from '@/lib/api';
 
 export default async function Docs() {
@@ -30,6 +34,10 @@ export default async function Docs() {
           </ol>
         </section>
       </div>
+
+      <h2>Bot commands</h2>
+      <p>Comment these on GitHub. The first line of the comment is the command.</p>
+      <CommandReference />
 
       <h2>Fees and trust</h2>
       <div className="two">

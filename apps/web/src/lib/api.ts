@@ -18,20 +18,62 @@ export async function apiGet<T>(path: string): Promise<T | null> {
   }
 }
 
+ feat/bounty-metadata-ai-accessibility
+
+ feat/bounty-disputes-funding-earnings-wallet
+
+ fresh-build
 export function symbolFor(token: string, tokens: TokenInfo[] = []): string {
   const configured = tokens.find((item) => item.address === token)?.symbol;
   if (configured) return configured;
   if (process.env.NEXT_PUBLIC_TOKEN_USDC === token) return 'USDC';
   if (process.env.NEXT_PUBLIC_TOKEN_XLM === token) return 'XLM';
   return `${token.slice(0, 4)}…`;
+ feat/bounty-metadata-ai-accessibility
 }
 
+
+}
+
+ fresh-build
+/** Distinguishes an unavailable API from an actual missing resource. */
+export async function apiGetResult<T>(path: string): Promise<{ kind: 'ok'; data: T } | { kind: 'not_found' } | { kind: 'unavailable' }> {
+  try {
+    const r = await fetch(`${API}${path}`, { cache: 'no-store' });
+    if (r.ok) return { kind: 'ok', data: (await r.json()) as T };
+    return r.status === 404 ? { kind: 'not_found' } : { kind: 'unavailable' };
+  } catch { return { kind: 'unavailable' }; }
+}
+
+export function refundWindow(deadline: string, graceMs = 72 * 3600e3, now = Date.now()): { open: boolean; label: string } {
+  const ms = new Date(deadline).getTime() + graceMs - now;
+  if (ms <= 0) return { open: true, label: 'Refund window is open' };
+  const hours = Math.ceil(ms / 3600e3);
+  return { open: false, label: `Refund available in ${hours >= 48 ? `${Math.ceil(hours / 24)}d` : `${hours}h`}` };
+}
+
+ feat/bounty-disputes-funding-earnings-wallet
+// Token symbols by contract id come from the environment; unknown tokens show a short id.
+export function symbolFor(token: string): string {
+  const map: Record<string, string> = {};
+  if (process.env.NEXT_PUBLIC_TOKEN_USDC) map[process.env.NEXT_PUBLIC_TOKEN_USDC] = 'USDC';
+  if (process.env.NEXT_PUBLIC_TOKEN_XLM) map[process.env.NEXT_PUBLIC_TOKEN_XLM] = 'XLM';
+  return map[token] ?? `${token.slice(0, 4)}…`;
+}
+
+
+ fresh-build
+ fresh-build
 export function money(amount: string, token: string, tokens: TokenInfo[] = []): string {
   const info = tokens.find((item) => item.address === token) ?? (
     process.env.NEXT_PUBLIC_TOKEN_USDC === token ? { address: token, symbol: 'USDC', decimals: 7 } :
     process.env.NEXT_PUBLIC_TOKEN_XLM === token ? { address: token, symbol: 'XLM', decimals: 7 } : undefined
   );
+ feat/bounty-metadata-ai-accessibility
   return info ? `${fromBaseUnits(BigInt(amount), info.decimals, 2)} ${info.symbol}` : `${amount} ${symbolFor(token, tokens)} (unknown token)`;
+
+  return info ? `${fromBaseUnits(BigInt(amount), info.decimals, 2)} ${info.symbol}` : `${amount} ${symbolFor(token)} (unknown token)`;
+ fresh-build
 }
 
 export function daysLeft(deadline: string, now = Date.now()): string {
@@ -59,3 +101,9 @@ export function totals(items: { amount: string; token: string }[], tokens: Token
 }
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+export function formatAddress(address: string, startChars = 8, endChars = 4): { display: string; full: string } {
+  if (address.length <= startChars + endChars + 3) return { display: address, full: address };
+  return { display: `${address.slice(0, startChars)}…${address.slice(-endChars)}`, full: address };
+}
+

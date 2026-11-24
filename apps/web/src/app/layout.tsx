@@ -44,6 +44,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <footer className="foot">
           <span>Funds are held by a Soroban contract on Stellar, not by us.</span>
           <span>AI reviews are advisory. Merging is the approval.</span>
+          <span><Link href="/status">Status</Link></span>
         </footer>
       </body>
     </html>

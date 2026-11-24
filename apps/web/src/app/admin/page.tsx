@@ -2,7 +2,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
 import { connect, signTx, WalletUxError } from '@/lib/freighter';
+ feat/bounty-metadata-ai-accessibility
 import { money, type TokenInfo } from '@/lib/api';
+
+import { money, formatAddress, type TokenInfo } from '@/lib/api';
+ fresh-build
 
 interface Dispute { id: string; status: string; reason: string; createdAt: string; overdue: boolean; resolutionNote: string | null; bounty: { id: string; issueTitle: string; amount: string; token: string; maintainer: string; repo: { fullName: string }; prs: { number: number; authorLogin: string; reviews: { verdict: string; score: number }[] }[] } }
 interface Payout { id: string; bountyId: string; prNumber: number; lastError: string | null; txHash: string | null }
@@ -78,7 +82,11 @@ export default function Admin() {
       {disputes.length === 0 ? <p className="muted">No open disputes.</p> : disputes.map((d) => (
         <div key={d.id} className="card" style={d.overdue ? { borderColor: 'var(--warn)' } : undefined}>
           <div className="row"><strong>{d.bounty.repo.fullName} · {d.bounty.issueTitle || `Bounty ${d.bounty.id}`}</strong><span className="badge">{d.status}{d.overdue ? ' · over 36 h' : ''}</span></div>
+ feat/bounty-metadata-ai-accessibility
           <p className="muted">{money(d.bounty.amount, d.bounty.token, tokens)} · maintainer <code>{d.bounty.maintainer}</code></p>
+
+          <p className="muted">{money(d.bounty.amount, d.bounty.token, tokens)} · maintainer <code data-address={d.bounty.maintainer} title={d.bounty.maintainer}>{formatAddress(d.bounty.maintainer).display}</code></p>
+ fresh-build
           <p>Reason: {d.reason}</p>
           <p className="muted">PRs: {d.bounty.prs.map((p) => `#${p.number} ${p.authorLogin}${p.reviews[0] ? ` (AI: ${p.reviews[0].verdict} ${p.reviews[0].score})` : ''}`).join(', ') || 'none'}</p>
           {d.status === 'requested' && <p><button onClick={() => openOnChain(d)}>Open on chain</button></p>}

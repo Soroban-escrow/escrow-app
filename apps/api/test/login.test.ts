@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { finishLogin, LoginError, safeNext, startLogin, type LoginDeps } from '../src/auth/github-login.js';
+import { clearSessionCookie, finishLogin, LoginError, safeNext, sessionCookie, startLogin, type LoginDeps } from '../src/auth/github-login.js';
 import { createDb } from '../src/db.js';
 import { loadConfig } from '../src/config.js';
 import { buildServer } from '../src/server.js';
@@ -57,6 +57,23 @@ describe('login flow', () => {
     await finishLogin(d2, { code: 'c', state: new URL(url).searchParams.get('state')! }, cookie);
     expect((await db.user.findUniqueOrThrow({ where: { githubId: 55n } })).isAdmin).toBe(false);
   });
+  it('frees a login held by another GitHub id when the account is claimed', async () => {
+    await db.user.create({ data: { githubId: 1n, githubLogin: 'maint' } });
+    ghUser = { id: 55, login: 'MAINT' }; // GitHub logins are case-insensitive
+    const d = deps();
+    const { url, cookie } = startLogin(d, '/me');
+    await finishLogin(d, { code: 'c', state: new URL(url).searchParams.get('state')! }, cookie);
+    expect((await db.user.findUniqueOrThrow({ where: { githubId: 1n } })).githubLogin).toBe('@stale-1');
+    expect((await db.user.findUniqueOrThrow({ where: { githubId: 55n } })).githubLogin).toBe('MAINT');
+  });
+  it('has a case-insensitive unique index on githubLogin', async () => {
+    const idx = await db.$queryRaw<Array<{ indexname: string }>>`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = current_schema() AND tablename = 'User'
+        AND indexname = 'User_githubLogin_lower_key' AND indexdef ILIKE '%lower(%'
+    `;
+    expect(idx).toHaveLength(1);
+  });
   it('rejects a missing cookie, a wrong state, a forged cookie and an expired one', async () => {
     const d = deps();
     const { url, cookie } = startLogin(d, '/me');
@@ -85,9 +102,29 @@ describe('login flow', () => {
   });
 });
 
+describe('session cookie clearing (#167)', () => {
+  // everything but the value and Max-Age, which legitimately differ between set and clear
+  const attributes = (header: string) => header.split(';').slice(1).map((a) => a.trim()).filter((a) => !a.startsWith('Max-Age')).sort();
+
+  it('the clear header carries the same attributes as the set header', () => {
+    for (const secure of [true, false]) {
+      const set = sessionCookie('abc', 3600, secure);
+      const clear = clearSessionCookie(secure);
+      expect(clear.split(';')[0]).toBe('se_session=');
+      expect(clear).toContain('Max-Age=0');
+      expect(attributes(clear)).toEqual(attributes(set));
+    }
+  });
+  it('is Secure exactly when the set header is', () => {
+    expect(sessionCookie('abc', 3600, true)).toContain('; Secure');
+    expect(clearSessionCookie(true)).toContain('; Secure');
+    expect(clearSessionCookie(false)).not.toContain('Secure');
+  });
+});
+
 describe('over HTTP', () => {
   const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V', SESSION_SECRET: 's'.repeat(32), CSRF_SECRET: 'c'.repeat(32), GITHUB_WEBHOOK_SECRET: 'hooksecret', LOG_LEVEL: 'silent' });
-  const app = () => buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, login: deps({ now: undefined as never }) });
+  const app = () => buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, login: deps({ now: undefined as never }) });
 
   it('/auth/login redirects to GitHub and sets a state cookie; the callback sets the session cookie and redirects home', async () => {
     const a = await app();

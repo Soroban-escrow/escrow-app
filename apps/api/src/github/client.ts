@@ -33,6 +33,7 @@ export function createGithubClient(cfg: GithubClientConfig) {
   const now = cfg.now ?? Date.now;
   const pem = cfg.privateKey.replace(/\\n/g, '\n');
   const tokens = new Map<string, { token: string; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<string>>();
 
   const appJwt = () => {
     const t = Math.floor(now() / 1000);
@@ -43,13 +44,23 @@ export function createGithubClient(cfg: GithubClientConfig) {
 
   async function installationToken(id: bigint, force = false): Promise<string> {
     const key = id.toString();
+    const pending = inFlight.get(key);
+    if (pending) return pending;
     const hit = tokens.get(key);
     if (!force && hit && hit.expiresAt - 60_000 > now()) return hit.token;
-    const r = await doFetch(`${api}/app/installations/${key}/access_tokens`, { method: 'POST', headers: { ...base, authorization: `Bearer ${appJwt()}` } });
-    if (!r.ok) throw new GithubError(r.status, `installation token: ${r.status}`);
-    const j = (await r.json()) as { token: string; expires_at: string };
-    tokens.set(key, { token: j.token, expiresAt: Date.parse(j.expires_at) });
-    return j.token;
+    const request = (async () => {
+      const r = await doFetch(`${api}/app/installations/${key}/access_tokens`, { method: 'POST', headers: { ...base, authorization: `Bearer ${appJwt()}` } });
+      if (!r.ok) throw new GithubError(r.status, `installation token: ${r.status}`);
+      const j = (await r.json()) as { token: string; expires_at: string };
+      tokens.set(key, { token: j.token, expiresAt: Date.parse(j.expires_at) });
+      return j.token;
+    })();
+    inFlight.set(key, request);
+    try {
+      return await request;
+    } finally {
+      if (inFlight.get(key) === request) inFlight.delete(key);
+    }
   }
 
   async function call(installation: bigint, method: string, path: string, body?: unknown, retried = false): Promise<Response> {
@@ -70,14 +81,27 @@ export function createGithubClient(cfg: GithubClientConfig) {
   const client = {
     /** All installations of this App (authenticated as the App itself, not an installation). */
     async listInstallations(): Promise<{ id: number; account: { login: string; type: string }; suspended_at: string | null }[]> {
-      const r = await doFetch(`${api}/app/installations?per_page=100`, { headers: { ...base, authorization: `Bearer ${appJwt()}` } });
-      if (!r.ok) throw new GithubError(r.status, `list installations: ${r.status}`);
-      return (await r.json()) as never;
+      const out: { id: number; account: { login: string; type: string }; suspended_at: string | null }[] = [];
+      // The installations endpoint returns a bare array, so a short page is the last one.
+      for (let page = 1; ; page++) {
+        const r = await doFetch(`${api}/app/installations?per_page=100&page=${page}`, { headers: { ...base, authorization: `Bearer ${appJwt()}` } });
+        if (!r.ok) throw new GithubError(r.status, `list installations: ${r.status}`);
+        const batch = (await r.json()) as typeof out;
+        out.push(...batch);
+        if (batch.length < 100) break;
+      }
+      return out;
     },
 
     async listRepositories(installation: bigint): Promise<{ id: number; full_name: string; private: boolean }[]> {
-      const j = await json<{ repositories: { id: number; full_name: string; private: boolean }[] }>(installation, 'GET', '/installation/repositories?per_page=100');
-      return j.repositories;
+      const out: { id: number; full_name: string; private: boolean }[] = [];
+      // `total_count` is the authoritative size; a short page is a fallback for fakes/proxies that omit it.
+      for (let page = 1; ; page++) {
+        const j = await json<{ total_count?: number; repositories: typeof out }>(installation, 'GET', `/installation/repositories?per_page=100&page=${page}`);
+        out.push(...j.repositories);
+        if (j.repositories.length < 100 || (j.total_count !== undefined && out.length >= j.total_count)) break;
+      }
+      return out;
     },
 
     /** repo permission of a user: admin | maintain | write | triage | read | none */
@@ -107,14 +131,29 @@ export function createGithubClient(cfg: GithubClientConfig) {
       repoOk(repo); positive(issue, 'issue');
       if (!/^bounty: [\w .]{1,40}$/.test(label)) throw new Error('invalid label');
       const existing = await json<{ name: string }[]>(installation, 'GET', `/repos/${repo}/issues/${issue}/labels?per_page=100`);
-      for (const l of existing) {
-        if (l.name.startsWith('bounty:') && l.name !== label) {
-          await call(installation, 'DELETE', `/repos/${repo}/issues/${issue}/labels/${encodeURIComponent(l.name)}`);
-        }
+      const bountyLabels = existing.filter((l) => l.name.startsWith('bounty:'));
+      const hasTarget = bountyLabels.some((l) => l.name === label);
+      // The common case on every chain event: nothing to change, so stop after the single GET.
+      if (bountyLabels.length === 1 && hasTarget) return;
+      for (const l of bountyLabels) {
+        if (l.name !== label) await call(installation, 'DELETE', `/repos/${repo}/issues/${issue}/labels/${encodeURIComponent(l.name)}`);
       }
+      // The issue already carries the label, so the repo label must exist too.
+      if (hasTarget) return;
       const made = await call(installation, 'POST', `/repos/${repo}/labels`, { name: label, color });
       if (!made.ok && made.status !== 422) throw new GithubError(made.status, `create label: ${made.status}`); // 422 = already exists
       await json(installation, 'POST', `/repos/${repo}/issues/${issue}/labels`, { labels: [label] });
+    },
+
+    /** Removes every "bounty:" label from the issue (called when a bounty is closed). */
+    async clearBountyLabel(installation: bigint, repo: string, issue: number): Promise<void> {
+      repoOk(repo); positive(issue, 'issue');
+      const existing = await json<{ name: string }[]>(installation, 'GET', `/repos/${repo}/issues/${issue}/labels?per_page=100`);
+      for (const l of existing) {
+        if (l.name.startsWith('bounty:')) {
+          await call(installation, 'DELETE', `/repos/${repo}/issues/${issue}/labels/${encodeURIComponent(l.name)}`);
+        }
+      }
     },
 
     /** Changed files with patches (paginated, capped at 300 files). */
@@ -134,13 +173,34 @@ export function createGithubClient(cfg: GithubClientConfig) {
         installation, 'GET', `/repos/${repoOk(repo)}/pulls/${positive(pr, 'pull request')}`);
     },
 
-    /** Overall CI result for a commit from its check runs. */
+    /** Overall CI result from check runs and commit statuses. */
     async getCiConclusion(installation: bigint, repo: string, sha: string): Promise<'success' | 'failure' | 'pending' | 'none'> {
       if (!SHA.test(sha)) throw new Error('invalid sha');
-      const j = await json<{ check_runs: { status: string; conclusion: string | null }[] }>(installation, 'GET', `/repos/${repoOk(repo)}/commits/${sha}/check-runs?per_page=100`);
-      if (j.check_runs.length === 0) return 'none';
-      if (j.check_runs.some((c) => c.status !== 'completed')) return 'pending';
-      return j.check_runs.every((c) => c.conclusion === 'success' || c.conclusion === 'neutral' || c.conclusion === 'skipped') ? 'success' : 'failure';
+      const basePath = `/repos/${repoOk(repo)}/commits/${sha}`;
+      const checks = (async () => {
+        const out: { status: string; conclusion: string | null }[] = [];
+        for (let page = 1; ; page++) {
+          const j = await json<{ total_count?: number; check_runs: typeof out }>(
+            installation, 'GET', `${basePath}/check-runs?per_page=100&page=${page}`,
+          );
+          out.push(...j.check_runs);
+          const hasMore = j.total_count === undefined ? j.check_runs.length === 100 : out.length < j.total_count;
+          if (!hasMore) break;
+          if (j.check_runs.length === 0) throw new Error('incomplete check runs response');
+        }
+        return out;
+      })();
+      const [runs, status] = await Promise.all([
+        checks,
+        json<{ state: string; total_count: number }>(installation, 'GET', `${basePath}/status`),
+      ]);
+      const failure = runs.some((c) => c.status === 'completed' && !['success', 'neutral', 'skipped'].includes(c.conclusion ?? ''));
+      const pending = runs.some((c) => c.status !== 'completed');
+      const hasStatus = status.total_count > 0;
+      if (failure || (hasStatus && (status.state === 'failure' || status.state === 'error'))) return 'failure';
+      if (pending || (hasStatus && status.state === 'pending')) return 'pending';
+      if (runs.length > 0 || (hasStatus && status.state === 'success')) return 'success';
+      return 'none';
     },
 
     async getReadmeExcerpt(installation: bigint, repo: string, max = 2000): Promise<string> {

@@ -1,19 +1,28 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import { authorizedMetricsRequest } from './ops/metrics.js';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { Config } from './config.js';
 import { verifySignature } from './github/signature.js';
 import { registerApi, type ApiDeps } from './routes/api.js';
+import { openApiDocument } from './routes/openapi.js';
 
 /** Minimal storage the webhook route needs; the real one is Prisma, tests pass a fake. */
 export interface DeliveryStore {
   /** returns false if the delivery id was already seen */
   insert(id: string, event: string): Promise<boolean>;
+  /** forgets a delivery id whose enqueue failed, so the redelivery is processed instead of ignored */
+  remove(id: string): Promise<void>;
   enqueue(id: string, event: string, payload: unknown): Promise<void>;
 }
 
-export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDeps, health?: () => Promise<{ ok: boolean }>): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: cfg.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers.cookie'] } });
+export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDeps, health?: () => Promise<{ ok: boolean }>, metrics?: () => Promise<string>): Promise<FastifyInstance> {
+  // trustProxy makes req.ip the real client (from X-Forwarded-For) rather than the proxy, which the global and
+  // anonymous rate limits key on. Without it every user behind Render/Vercel shares one limit.
+  const app = Fastify({
+    trustProxy: cfg.TRUST_PROXY,
+    logger: { level: cfg.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers.cookie'] },
+  });
   await app.register(helmet);
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 
@@ -24,10 +33,34 @@ export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDe
     try { done(null, JSON.parse((body as Buffer).toString('utf8'))); } catch { done(Object.assign(new Error('invalid JSON'), { statusCode: 400 }), undefined); }
   });
 
-  app.get('/health', async (_req, reply) => {
+  // Liveness: the process is up and serving. Checks no dependencies, so a slow RPC or lagging indexer never gets a healthy API restarted.
+  // Exempt from the global rate limit: a 429 on a liveness probe would look like a dead process.
+  app.get('/livez', { config: { rateLimit: false } }, async () => ({ ok: true }));
+
+  // Readiness: the dependency checks (db, RPC, Redis, indexer lag). 503 means "do not route traffic", not "restart".
+  const readiness = async (_req: FastifyRequest, reply: FastifyReply) => {
     const h = health ? await health() : { ok: true };
     return reply.code(h.ok ? 200 : 503).send(h);
+  };
+  app.get('/readyz', readiness);
+  // Kept for existing monitors and docs; same as /readyz.
+  app.get('/health', readiness);
+  // Monitoring is always authenticated. No configured token means a disabled endpoint.
+  // Avoid returning partial or stale series when the DB, Redis or RPC is unavailable.
+  app.get('/metrics', { config: { rateLimit: false } }, async (req, reply) => {
+    if (!cfg.METRICS_TOKEN) return reply.code(503).send('metrics not configured');
+    if (!authorizedMetricsRequest(cfg.METRICS_TOKEN, req.headers.authorization)) {
+      return reply.header('www-authenticate', 'Bearer realm="metrics"').code(401).send('unauthorized');
+    }
+    if (!metrics) return reply.code(503).send('metrics collector not configured');
+    try {
+      return reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8').send(await metrics());
+    } catch (error) {
+      req.log.error({ err: error }, 'metrics collection failed');
+      return reply.code(503).send('metrics unavailable');
+    }
   });
+  app.get('/openapi.json', async () => openApiDocument);
   if (api) registerApi(app, api);
 
   app.post('/github/webhooks', async (req, reply) => {
@@ -40,14 +73,32 @@ export async function buildServer(cfg: Config, store: DeliveryStore, api?: ApiDe
     if (typeof id !== 'string' || typeof event !== 'string') {
       return reply.code(400).send({ error: { code: 'bad_request', message: 'missing delivery headers' } });
     }
+    const deliveryLog = req.log.child({ deliveryId: id, githubEvent: event });
+    deliveryLog.info('webhook delivery received');
     let payload: unknown;
     try {
       payload = JSON.parse(raw.toString('utf8'));
     } catch {
       return reply.code(400).send({ error: { code: 'bad_json', message: 'invalid JSON' } });
     }
-    if (!(await store.insert(id, event))) return reply.code(200).send({ duplicate: true });
-    await store.enqueue(id, event, payload);
+    if (!(await store.insert(id, event))) {
+      deliveryLog.info('duplicate webhook delivery ignored');
+      return reply.code(200).send({ duplicate: true });
+    }
+    try {
+      await store.enqueue(id, event, payload);
+    } catch (e) {
+      // The id was already stored as seen. Release it, or the redelivery would be acknowledged as a duplicate and the event lost.
+      deliveryLog.error({ err: e }, 'webhook enqueue failed; releasing delivery id for redelivery');
+      try {
+        await store.remove(id);
+      } catch (removeErr) {
+        deliveryLog.error({ err: removeErr }, 'could not release webhook delivery id; its redelivery will be treated as a duplicate');
+      }
+      // 5xx tells GitHub the delivery failed, so it is redelivered
+      return reply.code(503).send({ error: { code: 'queue_unavailable', message: 'webhook could not be queued; redeliver' } });
+    }
+    deliveryLog.info('webhook delivery queued');
     return reply.code(202).send({ queued: true });
   });
 

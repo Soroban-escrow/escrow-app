@@ -187,7 +187,14 @@ pnpm install
 pnpm --filter @skillescrow/contract-client build   # generated bindings must be compiled once
 ```
 
-### 2. Create the databases
+### 2. Start Postgres and Redis (Docker Compose)
+
+```bash
+pnpm dev:up        # starts postgres:18-alpine and redis:8-alpine
+# pnpm dev:down    # stops the local containers when done
+```
+
+If you are using local system Postgres instead of Docker Compose, create the databases manually:
 
 ```bash
 createuser skillescrow
@@ -225,8 +232,9 @@ curl localhost:3001/health
 # {"ok":true,"db":true,"rpc":true,"redis":true,"indexerLagLedgers":0}
 ```
 
-`/health` returns **503** when the database, RPC or Redis is unreachable, or when the indexer has
-fallen more than ~5 minutes behind the chain.
+`/readyz` (also served as `/health`) returns **503** when the database, RPC or Redis is unreachable,
+or when the indexer has fallen more than ~5 minutes behind the chain. `/livez` only reports that the
+process is up, so use it for restart probes and `/readyz` for traffic routing.
 
 ### 5. Run the tests
 
@@ -371,12 +379,29 @@ Each group is optional. Leave it unset and that feature stays off.
 | **GitHub App** | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Bot comments, labels, PR tracking, GitHub sign-in. **All five or none** — a partial set is rejected. |
 | **Relayer** | `RELAYER_SECRET`, `RELAYER_MIN_XLM_ALERT` | Automatic release on merge. **Refused outright on mainnet** — use a KMS signer there. |
 | **AI review** | `ANTHROPIC_API_KEY`, `AI_MODEL`, `AI_MAX_REVIEWS_PER_PR_PER_DAY`, `AI_MAX_REVIEWS_PER_REPO_PER_DAY` | Advisory PR reviews, capped per PR and per repo per day. |
+| **Proxy** | `TRUST_PROXY` | Behind Render/Vercel/nginx, set the number of proxy hops (e.g. `1`) or a comma-separated list of proxy IPs/CIDRs so rate limits apply per real client IP instead of per proxy. Unset by default (no proxy trusted); `true` and `/0` ranges are rejected. |
 | **Admin** | `ADMIN_GITHUB_IDS` | Comma-separated GitHub user ids that get `/admin`. Re-applied on every login. |
 | **Alerts** | `ALERT_WEBHOOK_URL` | Low relayer balance, failed payouts, indexer lag, stale disputes. |
 | **Network** | `STELLAR_NETWORK`, `STELLAR_RPC_URL`, `STELLAR_NETWORK_PASSPHRASE`, `TOKEN_USDC_CONTRACT_ID`, `TOKEN_XLM_CONTRACT_ID` | Defaults to Stellar **testnet**. |
 
 > **Note for deployment:** `API_INTERNAL_URL` is read when `next build` runs — Next bakes rewrite
 > destinations into the build. Set it at build time, not only at start.
+
+---
+
+## Bot commands
+
+Comment these on GitHub; the first line of the comment is the command. The bot's `/bounty help`
+reply, the [docs page](apps/web/src/app/docs/page.tsx) and this table are all generated from
+[`COMMANDS`](packages/shared/src/command.ts) in `@skillescrow/shared`, and a test fails if this
+table no longer matches it.
+
+| Command | What it does | Who and where |
+|---|---|---|
+| `/bounty <amount> [USDC\|XLM] [<days>d]` e.g. `/bounty 50 USDC 14d` | Fund this issue. The bot replies with a funding link; the token defaults to USDC and the duration to 14 days. | Collaborators with write access, on an issue |
+| `/bounty dispute <reason>` e.g. `/bounty dispute the merged PR does not meet the criteria` | Flag a problem on a bountied issue for a human arbiter. | The bounty maintainer or an author of a linked PR, on an issue |
+| `/bounty review` | Queue a fresh AI review of this pull request against the bounty criteria. | Collaborators with write access, on a pull request |
+| `/bounty help` | List these commands. | Anyone, on an issue or pull request |
 
 ---
 
@@ -416,12 +441,19 @@ falling back to per IP.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+ feat/bounty-metadata-ai-accessibility
 | `GET` | `/health` | — | db, RPC, Redis, indexer lag (503 when unhealthy) |
+
+| `GET` | `/livez` | — | liveness: process only, always 200 while the server is up |
+| `GET` | `/readyz` | — | readiness: db, RPC, Redis, indexer lag (503 when unhealthy) |
+| `GET` | `/health` | — | alias of `/readyz` |
+ fresh-build
 | `GET` | `/config` | — | live escrow fee, duration settings, and allowed token metadata/limits |
 | `GET` | `/filters` | — | available bounty statuses, tokens, and repositories |
 | `GET` | `/auth/login`, `/auth/callback` | — | GitHub OAuth (PKCE) |
 | `GET` | `/auth/me` | session | profile + CSRF token |
 | `POST` | `/auth/logout` | session + CSRF | |
+| `POST` | `/auth/logout-all` | session + CSRF | end all of the user's sessions |
 | `POST` | `/wallet/challenge`, `/wallet/verify` | session + CSRF | SEP-53 wallet linking |
 | `DELETE` | `/wallet` | session + CSRF | unlink |
 | `GET` | `/bounties` | — | list; filter by status, token, repository, min amount, query; sort; cursor paging |

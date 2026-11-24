@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+ feat/bounty-metadata-ai-accessibility
 import { daysLeft, money, totals } from './api';
+
+import { daysLeft, money, totals, refundWindow } from './api';
+ fresh-build
 
 describe('formatting', () => {
   it('uses API token precision and never guesses precision for an unknown token', () => {
@@ -15,5 +19,10 @@ describe('formatting', () => {
     expect(daysLeft('2026-11-05T00:00:00Z', now)).toBe('3d left');
     expect(daysLeft('2026-11-02T05:00:00Z', now)).toBe('5h left');
     expect(daysLeft('2026-11-01T00:00:00Z', now)).toBe('deadline passed');
+  });
+  it('keeps refund unavailable until the deadline grace period ends', () => {
+    const deadline = '2026-11-02T00:00:00Z';
+    expect(refundWindow(deadline, 72 * 3600e3, Date.parse('2026-11-04T00:00:00Z'))).toEqual({ open: false, label: 'Refund available in 1d' });
+    expect(refundWindow(deadline, 72 * 3600e3, Date.parse('2026-11-05T00:00:00Z')).open).toBe(true);
   });
 });

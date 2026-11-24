@@ -1,10 +1,24 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
+ feat/bounty-metadata-ai-accessibility
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/freighter';
 import { money, type TokenInfo } from '@/lib/api';
 
 interface Funded { id: string; issueTitle: string; amount: string; token: string; status: string; deadline: string }
+
+ feat/bounty-disputes-funding-earnings-wallet
+import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
+import { explorerTx, money, type TokenInfo } from '@/lib/api';
+
+import { explorerTx, formatAddress, money, refundWindow, type TokenInfo } from '@/lib/api';
+import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
+import { CopyButton } from '@/components/CopyButton';
+ fresh-build
+
+interface Funded { id: string; issueTitle: string; amount: string; token: string; status: string; deadline: string }
+interface Earning { id: string; status: string; prNumber: number; txHash: string | null; bounty: { issueTitle: string; amount: string; token: string; feeBps: number } }
+ fresh-build
 interface Me { login: string; wallet: string | null; csrfToken: string }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
 
@@ -13,11 +27,24 @@ export default function Account() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
+ feat/bounty-metadata-ai-accessibility
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
+
+ feat/bounty-disputes-funding-earnings-wallet
+  const [earnings, setEarnings] = useState<Earning[]>([]);
+
+ fresh-build
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
+  const [submitted, setSubmitted] = useState<string | null>(null);
+ fresh-build
 
   useEffect(() => {
     fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then(setMe, () => setMe(null));
     fetch('/api/me/funded').then((r) => (r.ok ? r.json() : [])).then(setFunded, () => setFunded([]));
+ feat/bounty-metadata-ai-accessibility
+
+    fetch('/api/me/earnings').then((r) => (r.ok ? r.json() : [])).then(setEarnings, () => setEarnings([]));
+ fresh-build
     fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
   }, []);
 
@@ -34,8 +61,10 @@ export default function Account() {
       if (!b.ok) throw new WalletUxError(errorText(bj.error?.code, bj.error?.message ?? 'Could not prepare the transaction.'));
       const signed = await signTx(bj.xdr, address, PASSPHRASE);
       const s = await fetch('/api/tx/submit', { method: 'POST', headers: h, body: JSON.stringify({ xdr: signed, address }) });
+      const sj = await s.json();
       if (!s.ok) throw new WalletUxError('The network rejected the transaction.');
-      setMsg({ ok: true, text: `${kind === 'release' ? 'Release' : 'Refund'} submitted. The status updates once it confirms.` });
+      setSubmitted(sj.hash ?? null);
+      setMsg({ ok: true, text: `${kind === 'release' ? 'Release' : 'Refund'} submitted and is being confirmed.` });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof WalletUxError ? e.message : 'Something went wrong. Please try again.' });
     } finally { setBusy(false); }
@@ -73,7 +102,7 @@ export default function Account() {
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
       <h1>{me.login}</h1>
       <h2>Wallet</h2>
-      {me.wallet ? <p>Linked: <code>{me.wallet}</code></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
+      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code><CopyButton value={me.wallet} label="wallet address" /></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
       <button onClick={link} disabled={busy}>{busy ? 'Waiting for Freighter…' : me.wallet ? 'Change wallet' : 'Link wallet'}</button>
       {msg && <p role="status" className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
       <h2>Funded bounties</h2>
@@ -81,9 +110,19 @@ export default function Account() {
         <div key={f.id} className="card">
           <div className="row"><a href={`/b/${f.id}`}>{f.issueTitle || `Bounty ${f.id}`}</a><span className="badge">{f.status}</span></div>
           <div className="row muted"><span className="amount">{money(f.amount, f.token, tokens)}</span>
+ feat/bounty-metadata-ai-accessibility
+
+ feat/bounty-disputes-funding-earnings-wallet
+ fresh-build
             {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
+
+            {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> {refundWindow(f.deadline).open ? <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button> : <small>{refundWindow(f.deadline).label}</small>}</span>}</div>
+ fresh-build
         </div>
       ))}
+      <h2>Contributor earnings</h2>
+      {earnings.length === 0 ? <p className="muted">No contributor payouts yet.</p> : earnings.map((e) => <div className="card" key={e.id}><div className="row"><span>{e.bounty.issueTitle || `PR #${e.prNumber}`}</span><span className="badge">{e.status}</span></div><p className="muted amount">{money(e.bounty.amount, e.bounty.token, tokens)} · fee {(e.bounty.feeBps / 100).toFixed(2)}%</p>{e.txHash && <a className="mono" href={explorerTx(e.txHash)} rel="noreferrer noopener">View payout transaction ↗</a>}</div>)}
+      {submitted && <p className="muted" role="status">Tracking confirmation… <a href={explorerTx(submitted)} rel="noreferrer noopener">View transaction ↗</a></p>}
       <p className="muted">We never ask for your secret key; you only sign a message in Freighter.</p>
     </>
   );

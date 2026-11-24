@@ -1,3 +1,4 @@
+import { PullRequestState } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
 import { handlePullRequest, parseClosingRefs, type PullRequestPayload } from '../src/github/pulls.js';
@@ -26,8 +27,8 @@ const deps = () => ({
 });
 const pr = (action: string, over: Partial<PullRequestPayload['pull_request']> = {}): PullRequestPayload => ({
   action,
-  repository: { id: 100, full_name: 'o/r' },
-  pull_request: { id: 500, number: 3, body: 'Closes #7', merged: false, merged_at: null, state: 'open', head: { sha: 'abc' }, user: { id: 9, login: 'c', type: 'User' }, ...over },
+  repository: { id: 100, full_name: 'o/r', default_branch: 'main' },
+  pull_request: { id: 500, number: 3, body: 'Closes #7', merged: false, merged_at: null, state: 'open', head: { sha: 'abc' }, base: { ref: 'main' }, user: { id: 9, login: 'c', type: 'User' }, ...over },
 });
 
 beforeEach(async () => {
@@ -41,7 +42,7 @@ beforeEach(async () => {
 describe('handlePullRequest', () => {
   it('tracks an opened PR and triggers a review', async () => {
     expect(await handlePullRequest(deps(), pr('opened'))).toEqual([1n]);
-    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe('open');
+    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe(PullRequestState.OPEN);
     expect(reviews).toEqual([500n]);
   });
   it('skips drafts for review, PRs with no bounty, and bots', async () => {
@@ -61,17 +62,46 @@ describe('handlePullRequest', () => {
     const p = await db.payout.findFirstOrThrow();
     expect(p.status).toBe('QUEUED');
     expect(p.prNumber).toBe(3);
-    // a later edit does not unmerge it
+    // a later edit does not unmerge it, nor drop its links
     await handlePullRequest(deps(), pr('synchronize', { head: { sha: 'zzz' } }));
+    await handlePullRequest(deps(), pr('edited', { body: 'no closing refs' }));
     const rec = await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } });
-    expect(rec.state).toBe('merged');
+    expect(rec.state).toBe(PullRequestState.MERGED);
     expect(rec.headSha).toBe('abc');
+    expect(await db.pullRequestBounty.count()).toBe(1);
+  });
+
+  it('only pays out on a merge into the default branch', async () => {
+    await db.user.create({ data: { githubId: 9n, githubLogin: 'c', wallet: 'GWIN' } });
+    const merged = { merged: true, merged_at: '2026-11-02T10:00:00Z', state: 'closed' };
+    // a feature branch merge does not fix the issue on the default branch and pays nothing
+    await handlePullRequest(deps(), pr('closed', { ...merged, id: 501, base: { ref: 'feature/fix' } }));
+    expect(await db.payout.count()).toBe(0);
+    // the same PR merged into the default branch does pay
+    await handlePullRequest(deps(), pr('closed', { ...merged, id: 502, base: { ref: 'main' } }));
+    expect(await db.payout.count()).toBe(1);
+  });
+
+  it('adds and then removes links as closing refs are added and dropped from the body', async () => {
+    await db.bounty.create({ data: { id: 2n, repoId: 100n, issueNumber: 8, issueTitle: '', issueUrl: '', criteria: [], maintainer: 'GMAINT', maintainerGithubId: 55n, token: 'C', amount: '2000', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't2', createdAt: new Date() } });
+    await handlePullRequest(deps(), pr('opened', { body: 'Closes #7 and fixes #8' }));
+    expect((await db.pullRequestBounty.findMany()).map((l) => l.bountyId).sort()).toEqual([1n, 2n]);
+
+    // dropping #8 removes only that link
+    await handlePullRequest(deps(), pr('edited', { body: 'Closes #7 only' }));
+    expect((await db.pullRequestBounty.findMany()).map((l) => l.bountyId)).toEqual([1n]);
+
+    // dropping every closing ref removes the remaining link; a later merge cannot pay out
+    await handlePullRequest(deps(), pr('synchronize', { body: 'no closing keywords here', head: { sha: 'new' } }));
+    expect(await db.pullRequestBounty.count()).toBe(0);
+    await handlePullRequest(deps(), pr('closed', { body: 'no closing keywords here', merged: true, merged_at: '2026-11-02T10:00:00Z', state: 'closed' }));
+    expect(await db.payout.count()).toBe(0);
   });
   it('closed without merge does not pay', async () => {
     await handlePullRequest(deps(), pr('opened'));
     await handlePullRequest(deps(), pr('closed', { state: 'closed' }));
     expect(await db.payout.count()).toBe(0);
-    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe('closed');
+    expect((await db.pullRequest.findUniqueOrThrow({ where: { id: 500n } })).state).toBe(PullRequestState.CLOSED);
   });
 
   it('one PR can close several bounties: one PR row, one link per bounty, a payout for each on merge', async () => {
