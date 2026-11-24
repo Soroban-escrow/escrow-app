@@ -1,5 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { clearSessionCookie } from '../src/auth/github-login.js';
 import { sep53Hash } from '../src/auth/wallet.js';
 import { createSession } from '../src/auth/session.js';
 import { loadConfig } from '../src/config.js';
@@ -13,7 +14,7 @@ const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQ
 
 let linked: bigint[];
 const app = async (overrides: Partial<ApiDeps> = {}) =>
-  buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+  buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
     db,
     csrfSecret: cfg.CSRF_SECRET,
     onWalletLinked: async (g) => void linked.push(g),
@@ -88,6 +89,18 @@ describe('auth and CSRF', () => {
     const t = await csrf(a, cookie);
     expect((await a.inject({ method: 'POST', url: '/auth/logout', headers: { cookie, 'x-csrf-token': t } })).statusCode).toBe(200);
     expect((await a.inject({ url: '/auth/me', headers: { cookie } })).statusCode).toBe(401);
+  });
+  it('logout clears the session cookie with the same Secure flag the login set (#167)', async () => {
+    const loginDeps = { db, clientId: 'Iv1.test', clientSecret: 'shh', callbackUrl: 'https://api.example.test/auth/callback', webUrl: 'https://example.test', secret: 's'.repeat(32), adminGithubIds: [] };
+    const a = await app({ login: loginDeps });
+    // each logout destroys its session, so each route gets a fresh one
+    for (const [url, n] of [['/auth/logout', 1n], ['/auth/logout-all', 2n]] as const) {
+      const { cookie } = await login(`user${n}`, n);
+      const t = await csrf(a, cookie);
+      const r = await a.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': t } });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['set-cookie']).toBe(clearSessionCookie(true));
+    }
   });
 });
 
@@ -170,7 +183,7 @@ describe('public reads', () => {
     expect((await a.inject('/filters')).json()).toEqual({ statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: ['TOKEN_A', 'TOKEN_B'], repositories: ['o/Other', 'o/Repo'] });
   });
   it('publishes live contract fee and token precision and limits', async () => {
-    const a = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+    const a = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
       db, csrfSecret: cfg.CSRF_SECRET, tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6 }],
       chain: {
         getConfig: async () => ({ fee_bps: 275, grace_secs: 3600n, min_duration_secs: 86400n, max_duration_secs: 2592000n }),

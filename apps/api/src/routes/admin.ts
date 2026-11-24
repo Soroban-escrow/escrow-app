@@ -30,7 +30,8 @@ export const disputeResolveSchema = z.object({
   note: z.string().max(1000).default(''),
 });
 export const disputeRejectSchema = z.object({ note: z.string().min(1).max(1000) });
-export const payoutQuerySchema = z.object({ status: z.enum(['FAILED', 'PENDING_WALLET', 'AWAITING_MAINTAINER', 'QUEUED', 'SUBMITTED', 'CONFIRMED']).default('FAILED') });
+export const PAYOUT_STATUSES = ['FAILED', 'PENDING_WALLET', 'AWAITING_MAINTAINER', 'QUEUED', 'SUBMITTED', 'CONFIRMED'] as const;
+export const payoutQuerySchema = z.object({ status: z.enum(PAYOUT_STATUSES).default('FAILED') });
 
 export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutating: boolean) => object) {
   const now = () => (d.now ?? (() => new Date()))();
@@ -111,8 +112,10 @@ export function registerAdmin(app: FastifyInstance, d: AdminDeps, authed: (mutat
 
   app.get('/admin/payouts', adminOnly(false), async (req, reply) => {
     if (!(await guard(req, reply))) return reply;
-    const status = payoutQuerySchema.parse(req.query).status;
-    return ser(await d.db.payout.findMany({ where: { status }, orderBy: { updatedAt: 'desc' }, take: 100 }));
+    // safeParse: an unknown status is a client error, not an unhandled ZodError (500)
+    const query = payoutQuerySchema.safeParse(req.query);
+    if (!query.success) return err(reply, 400, 'bad_request', `status must be one of: ${PAYOUT_STATUSES.join(', ')}`);
+    return ser(await d.db.payout.findMany({ where: { status: query.data.status }, orderBy: { updatedAt: 'desc' }, take: 100 }));
   });
 
   /** Only payouts with no submitted transaction can be re-queued; one with a hash must be checked on chain first. */

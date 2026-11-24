@@ -52,7 +52,7 @@ describe('dispute review SLA', () => {
       submitSigned: async () => 'h', getBounty: async () => ({ status: 'Open' }),
       buildOpenDisputeTx: async () => 'x', buildResolveTx: async () => 'x',
     };
-    const app = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+    const app = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
       db, csrfSecret: cfg.CSRF_SECRET, chain,
     });
     const csrf = (await app.inject({ url: '/auth/me', headers: { cookie } })).json().csrfToken as string;

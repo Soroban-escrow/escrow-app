@@ -11,7 +11,7 @@ const cfg = loadConfig({
   LOG_LEVEL: 'silent',
 });
 const db = {} as never;
-const app = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
+const app = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
   db,
   csrfSecret: cfg.CSRF_SECRET,
   login: {

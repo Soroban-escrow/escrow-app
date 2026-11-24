@@ -1,6 +1,7 @@
 import { StrKey } from '@stellar/stellar-sdk';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { contractErrorName } from '../chain/errors.js';
 import type { Db } from '../db.js';
 import { chainError, err, type Authed } from './http.js';
 import { mutationLimit } from './limits.js';
@@ -78,7 +79,15 @@ export function registerFunding(app: FastifyInstance, d: FundingDeps, authed: (m
     }
     let hash: string;
     try { hash = await d.chain.submitSigned(body.data.xdr, body.data.address); }
-    catch (e) { return err(reply, 422, 'submit_rejected', e instanceof Error ? e.message.slice(0, 200) : 'rejected'); }
+    catch (e) {
+      // Raw RPC text can expose node internals, so it is logged server-side only. The client gets a stable code.
+      const raw = e instanceof Error ? e.message : String(e);
+      req.log.warn({ rawError: raw }, 'transaction submit rejected');
+      const name = contractErrorName(raw);
+      return name
+        ? err(reply, 422, `contract_${name}`, `The contract rejected this: ${name}`)
+        : err(reply, 422, 'submit_rejected', 'The network rejected this transaction.');
+    }
     // Bind after the chain accepts the tx. Best effort: the indexer falls back to a fuzzy match
     // (with a warning) if the binding is missing. Never fail a successful submission over this.
     if (intent) {

@@ -5,7 +5,7 @@ import { createChallenge, unlinkWallet, verifyChallenge, WalletError } from '../
 import type { IssueCommenter } from '../ops/reminders.js';
 import { COOKIE, csrfToken, csrfValid, destroySession, destroyAllSessions, getSessionUser, renewSessionIfNeeded } from '../auth/session.js';
 import { parseCookies } from '../auth/cookies.js';
-import { clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
+import { clearSessionCookie, clearStateCookie, finishLogin, LoginError, OAUTH_COOKIE, sessionCookie, startLogin, stateCookie, type LoginDeps } from '../auth/github-login.js';
 import type { Db } from '../db.js';
 import { mutationLimit as limit } from './limits.js';
 import { registerAdmin, type AdminChain } from './admin.js';
@@ -93,12 +93,12 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   app.post('/auth/logout', authed(true), async (req, reply) => {
     await destroySession(d.db, (req as Authed).sessionId!);
-    return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
+    return reply.header('set-cookie', clearSessionCookie(secure)).send({ ok: true });
   });
 
   app.post('/auth/logout-all', authed(true), async (req, reply) => {
     await destroyAllSessions(d.db, (req as Authed).user!.id);
-    return reply.header('set-cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).send({ ok: true });
+    return reply.header('set-cookie', clearSessionCookie(secure)).send({ ok: true });
   });
 
   app.post('/wallet/challenge', { ...authed(true), ...mutationLimit }, async (req, reply) => {

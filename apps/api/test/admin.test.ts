@@ -32,7 +32,8 @@ const chain = {
 async function login(githubId: bigint, isAdmin: boolean) {
   const u = await db.user.create({ data: { githubId, githubLogin: `u${githubId}`, isAdmin } });
   const cookie = `se_session=${(await createSession(db, u.id)).id}`;
-  const a = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain, commenter });
+  // the guard reads admin rights from config (adminGithubIds), not from the user row, so the test must grant them there too
+  const a = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain, commenter, adminGithubIds: isAdmin ? [githubId] : [] });
   const csrf = (await a.inject({ url: '/auth/me', headers: { cookie } })).json().csrfToken as string;
   return { a, h: { cookie, 'x-csrf-token': csrf } };
 }
@@ -182,6 +183,15 @@ describe('payouts and status', () => {
     const withHash = await mk('release:2', { txHash: 'H' });
     expect((await a.inject({ method: 'POST', url: `/admin/payouts/${withHash.id}/retry`, headers: h, payload: {} })).json().error.code).toBe('has_tx_hash');
     expect((await a.inject({ url: '/admin/payouts', headers: h })).json()).toHaveLength(1);
+  });
+  it('rejects an unknown payout status with 400 bad_request and the allowed values (#165)', async () => {
+    const { a, h } = await login(2n, true);
+    const bad = await a.inject({ url: '/admin/payouts?status=NOPE', headers: h });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.code).toBe('bad_request');
+    expect(bad.json().error.message).toContain('FAILED, PENDING_WALLET, AWAITING_MAINTAINER, QUEUED, SUBMITTED, CONFIRMED');
+    expect((await a.inject({ url: '/admin/payouts?status=', headers: h })).statusCode).toBe(400);
+    expect((await a.inject({ url: '/admin/payouts?status=QUEUED', headers: h })).statusCode).toBe(200);
   });
   it('reports status counts', async () => {
     const { a, h } = await login(2n, true);

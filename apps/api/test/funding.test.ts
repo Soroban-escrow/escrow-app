@@ -22,10 +22,15 @@ const chain: FundingChain & AdminChain = {
   buildFundTx: async (p) => { if (fail) throw fail; (calls.fund ??= []).push(p); return 'FUNDXDR'; },
   buildReleaseTx: async (...a) => { if (fail) throw fail; (calls.release ??= []).push(a); return 'RELXDR'; },
   buildRefundTx: async (...a) => { if (fail) throw fail; (calls.refund ??= []).push(a); return 'REFXDR'; },
-  submitSigned: async (x, s) => { if (x === 'BADXDRBADXDR') throw new Error('not a contract call'); (calls.submit ??= []).push([x, s]); return 'HASH'; },
+  submitSigned: async (x, s) => {
+    if (x === 'BADXDRBADXDR') throw new Error('not a contract call');
+    // raw node text: contract error #3 (Unauthorized) plus an internal address that must never reach the client
+    if (x === 'CONTRACTXDR1') throw new Error('simulation failed: HostError: Error(Contract, #3) at rpc node 10.0.0.5');
+    (calls.submit ??= []).push([x, s]); return 'HASH';
+  },
   getBounty: async () => ({ status: chainStatus }),
 };
-const app = () => buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain });
+const app = () => buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, chain });
 
 async function login(githubId: bigint, wallet: string | null = null) {
   const u = await db.user.create({ data: { githubId, githubLogin: `u${githubId}`, wallet } });
@@ -101,6 +106,16 @@ describe('POST /tx/submit', () => {
     expect((await post(a, '/tx/submit', h, { xdr: 'BADXDRBADXDR' })).statusCode).toBe(422);
     expect((await post(a, '/tx/submit', h, {})).statusCode).toBe(400);
     expect((await a.inject({ method: 'POST', url: '/tx/submit', payload: { xdr: 'AAAAAAAAAAAAAAA' } })).statusCode).toBe(401);
+  });
+  it('maps rejections to stable codes and never echoes raw RPC text (#166)', async () => {
+    const { a, h } = await login(1n);
+    const contract = await post(a, '/tx/submit', h, { xdr: 'CONTRACTXDR1' });
+    expect(contract.statusCode).toBe(422);
+    expect(contract.json()).toEqual({ error: { code: 'contract_Unauthorized', message: 'The contract rejected this: Unauthorized' } });
+    const generic = await post(a, '/tx/submit', h, { xdr: 'BADXDRBADXDR' });
+    expect(generic.statusCode).toBe(422);
+    expect(generic.json()).toEqual({ error: { code: 'submit_rejected', message: 'The network rejected this transaction.' } });
+    expect(JSON.stringify([contract.json(), generic.json()])).not.toMatch(/10\.0\.0\.5|not a contract call|HostError/);
   });
   it('records {intentId, txHash} at submit time so the indexer can bind by hash', async () => {
     await intent();

@@ -94,6 +94,9 @@ export async function finishLogin(d: LoginDeps, q: { code?: string; state?: stri
 
 export const sessionCookie = (id: string, maxAge: number, secure: boolean) =>
   `${COOKIE}=${id}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
+/** Expires the session cookie with the same path and flags as sessionCookie, so the browser drops the cookie it set. */
+export const clearSessionCookie = (secure: boolean) =>
+  `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 export const stateCookie = (value: string, secure: boolean) =>
   `${OAUTH_COOKIE}=${value}; Path=/; Max-Age=${TTL_MS / 1000}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 export const clearStateCookie = `${OAUTH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
