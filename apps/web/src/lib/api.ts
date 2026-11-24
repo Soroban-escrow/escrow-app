@@ -18,6 +18,8 @@ export async function apiGet<T>(path: string): Promise<T | null> {
   }
 }
 
+ feat/bounty-disputes-funding-earnings-wallet
+
 export function symbolFor(token: string, tokens: TokenInfo[] = []): string {
   const configured = tokens.find((item) => item.address === token)?.symbol;
   if (configured) return configured;
@@ -26,6 +28,7 @@ export function symbolFor(token: string, tokens: TokenInfo[] = []): string {
   return `${token.slice(0, 4)}…`;
 }
 
+ fresh-build
 /** Distinguishes an unavailable API from an actual missing resource. */
 export async function apiGetResult<T>(path: string): Promise<{ kind: 'ok'; data: T } | { kind: 'not_found' } | { kind: 'unavailable' }> {
   try {
@@ -42,12 +45,23 @@ export function refundWindow(deadline: string, graceMs = 72 * 3600e3, now = Date
   return { open: false, label: `Refund available in ${hours >= 48 ? `${Math.ceil(hours / 24)}d` : `${hours}h`}` };
 }
 
+ feat/bounty-disputes-funding-earnings-wallet
+// Token symbols by contract id come from the environment; unknown tokens show a short id.
+export function symbolFor(token: string): string {
+  const map: Record<string, string> = {};
+  if (process.env.NEXT_PUBLIC_TOKEN_USDC) map[process.env.NEXT_PUBLIC_TOKEN_USDC] = 'USDC';
+  if (process.env.NEXT_PUBLIC_TOKEN_XLM) map[process.env.NEXT_PUBLIC_TOKEN_XLM] = 'XLM';
+  return map[token] ?? `${token.slice(0, 4)}…`;
+}
+
+
+ fresh-build
 export function money(amount: string, token: string, tokens: TokenInfo[] = []): string {
   const info = tokens.find((item) => item.address === token) ?? (
     process.env.NEXT_PUBLIC_TOKEN_USDC === token ? { address: token, symbol: 'USDC', decimals: 7 } :
     process.env.NEXT_PUBLIC_TOKEN_XLM === token ? { address: token, symbol: 'XLM', decimals: 7 } : undefined
   );
-  return info ? `${fromBaseUnits(BigInt(amount), info.decimals, 2)} ${info.symbol}` : `${amount} ${symbolFor(token, tokens)} (unknown token)`;
+  return info ? `${fromBaseUnits(BigInt(amount), info.decimals, 2)} ${info.symbol}` : `${amount} ${symbolFor(token)} (unknown token)`;
 }
 
 export function daysLeft(deadline: string, now = Date.now()): string {

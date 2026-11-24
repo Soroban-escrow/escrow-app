@@ -1,11 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
+ feat/bounty-disputes-funding-earnings-wallet
+import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
+import { explorerTx, money, type TokenInfo } from '@/lib/api';
+
 import { explorerTx, formatAddress, money, refundWindow, type TokenInfo } from '@/lib/api';
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
 import { CopyButton } from '@/components/CopyButton';
+ fresh-build
 
 interface Funded { id: string; issueTitle: string; amount: string; token: string; status: string; deadline: string }
+interface Earning { id: string; status: string; prNumber: number; txHash: string | null; bounty: { issueTitle: string; amount: string; token: string; feeBps: number } }
 interface Me { login: string; wallet: string | null; csrfToken: string }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
 
@@ -14,12 +20,17 @@ export default function Account() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
+ feat/bounty-disputes-funding-earnings-wallet
+  const [earnings, setEarnings] = useState<Earning[]>([]);
+
+ fresh-build
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [submitted, setSubmitted] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then(setMe, () => setMe(null));
     fetch('/api/me/funded').then((r) => (r.ok ? r.json() : [])).then(setFunded, () => setFunded([]));
+    fetch('/api/me/earnings').then((r) => (r.ok ? r.json() : [])).then(setEarnings, () => setEarnings([]));
     fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
   }, []);
 
@@ -85,9 +96,15 @@ export default function Account() {
         <div key={f.id} className="card">
           <div className="row"><a href={`/b/${f.id}`}>{f.issueTitle || `Bounty ${f.id}`}</a><span className="badge">{f.status}</span></div>
           <div className="row muted"><span className="amount">{money(f.amount, f.token, tokens)}</span>
+ feat/bounty-disputes-funding-earnings-wallet
+            {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
+
             {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> {refundWindow(f.deadline).open ? <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button> : <small>{refundWindow(f.deadline).label}</small>}</span>}</div>
+ fresh-build
         </div>
       ))}
+      <h2>Contributor earnings</h2>
+      {earnings.length === 0 ? <p className="muted">No contributor payouts yet.</p> : earnings.map((e) => <div className="card" key={e.id}><div className="row"><span>{e.bounty.issueTitle || `PR #${e.prNumber}`}</span><span className="badge">{e.status}</span></div><p className="muted amount">{money(e.bounty.amount, e.bounty.token, tokens)} · fee {(e.bounty.feeBps / 100).toFixed(2)}%</p>{e.txHash && <a className="mono" href={explorerTx(e.txHash)} rel="noreferrer noopener">View payout transaction ↗</a>}</div>)}
       {submitted && <p className="muted" role="status">Tracking confirmation… <a href={explorerTx(submitted)} rel="noreferrer noopener">View transaction ↗</a></p>}
       <p className="muted">We never ask for your secret key; you only sign a message in Freighter.</p>
     </>
