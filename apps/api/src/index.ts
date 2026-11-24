@@ -3,6 +3,7 @@ import { createDb } from './db.js';
 import { createChain } from './chain/client.js';
 import { webhookProducer } from './worker/queue.js';
 import { healthReport } from './ops/health.js';
+import { collectMetrics } from './ops/metrics.js';
 import { createGithubClient } from './github/client.js';
 import { githubIssueCommenter, githubNotifier } from './github/sync.js';
 import { onWalletLinked } from './payouts/payout.js';
@@ -42,7 +43,8 @@ const app = await buildServer(cfg, store, {
     ...(cfg.TOKEN_USDC_CONTRACT_ID ? [{ address: cfg.TOKEN_USDC_CONTRACT_ID, symbol: 'USDC', decimals: 7 }] : []),
     ...(cfg.TOKEN_XLM_CONTRACT_ID ? [{ address: cfg.TOKEN_XLM_CONTRACT_ID, symbol: 'XLM', decimals: 7 }] : []),
   ],
-}, () => healthReport({ db, latestLedger: async () => (await chain.server.getLatestLedger()).sequence }));
+}, () => healthReport({ db, latestLedger: async () => (await chain.server.getLatestLedger()).sequence }),
+  () => collectMetrics(db, async () => (await chain.server.getLatestLedger()).sequence, cfg.REDIS_URL));
 // on Vercel the function wrapper in api/index.js hands requests to the app instead of listening
 if (!process.env.VERCEL) await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 export default app;

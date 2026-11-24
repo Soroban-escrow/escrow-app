@@ -16,6 +16,28 @@
 - Retry a failed payout from the admin page only when no tx hash is stored; otherwise verify the hash on chain first.
 - Web: `API_INTERNAL_URL` is baked in at `next build`; rebuild when it changes.
 
+## Prometheus metrics (issue #105)
+
+The API serves `GET /metrics` in Prometheus text exposition format. It is **disabled** (HTTP 503) until a dedicated, randomly generated `METRICS_TOKEN` of at least 32 characters is configured **on the API process**. Never reuse session, webhook, or GitHub credentials for this purpose. Requests without the matching `Authorization: Bearer <token>` header return HTTP 401; the token must never appear in URL query strings.
+
+Example (replace the placeholder with a secret loaded from a protected environment):
+
+```sh
+curl -fsS -H "Authorization: Bearer ${METRICS_TOKEN}" http://localhost:3001/metrics
+```
+
+Configure a protected Prometheus scrape job with an `authorization` bearer credential from your secrets manager. Restrict ingress to monitoring infrastructure, require HTTPS in production, and do **not** publish the endpoint through a publicly accessible token-less reverse proxy.
+
+Metrics exposed:
+- `skillescrow_indexer_lag_ledgers` (gauge): latest Soroban ledger minus the persisted `bounty_escrow` cursor; absent before the first cursor is created. `skillescrow_indexer_cursor_available` disambiguates unknown lag from zero lag.
+- `skillescrow_payouts{status=...}` (gauge): live database counts for every payout state.
+- `skillescrow_queue_jobs{queue=...,state=...}` (gauge): BullMQ waiting, active, delayed, and failed jobs for webhook and AI-review queues; no approximate local-process counters.
+- `skillescrow_webhook_jobs_total{result=...}` (counter): worker attempts classified as success, ignored, or error.
+- `skillescrow_ai_reviews_total{outcome=...}` (counter): review worker outcomes (`reviewed`, `cached`, `draft`, `closed`, `rate_limited`, `no_bounty`, `no_pr`, or `error`).
+- `skillescrow_ai_review_verdicts{verdict=...}` (gauge): persisted review verdict distribution.
+
+The API reads counters written by the worker to a Redis hash (`skillescrow:metrics:jobs:v1`). Counters start at zero when this feature is deployed; a Redis flush/restore without persistence resets them, and Prometheus treats that as a counter reset. Retries count as **attempts**, not distinct deliveries. DB gauges persist across restarts. Scrapes fail with HTTP 503 when DB, Redis, or the Stellar RPC cannot be queried, rather than returning a misleading partial snapshot. Metrics labels use fixed enums only: no wallets, PR numbers, tx hashes, or other high-cardinality values are exported.
+
 ## Recovering missed GitHub webhooks
 1. **Redeliver individual failed deliveries:**
    - Open the GitHub App settings -> **Advanced** -> **Recent Deliveries**.

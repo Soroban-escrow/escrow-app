@@ -5,6 +5,7 @@ import { createChain } from '../chain/client.js';
 import { createDb } from '../db.js';
 import { run as runIndexer } from '../indexer/indexer.js';
 import { alertSender, collectAlerts, ALERT_COOLDOWN_MS, redisCooldown } from '../ops/alerts.js';
+import { recordJobMetric } from '../ops/metrics.js';
 import { sendRefundReminders } from '../ops/reminders.js';
 import { runRelayer } from '../payouts/loop.js';
 import { createRelayer } from '../payouts/relayer.js';
@@ -65,14 +66,26 @@ const deps = {
   log,
 };
 
+// Shared durable counters: the API serves metrics; the worker updates outcomes.
+const metricsRedis = new Redis(cfg.REDIS_URL, { maxRetriesPerRequest: null });
+const countJob = async (kind: 'webhook' | 'review', result: string) => {
+  try { await recordJobMetric(metricsRedis, kind, result); }
+  catch (error) { logger.warn({ err: error }, 'could not record job metric'); }
+};
 const ac = new AbortController();
 const reviewConsumer = reviewsOn
   ? reviewWorker(cfg.REDIS_URL, async (prId, force) => {
-      const outcome = await runPrReview({
-        db, gh: ghClient!, model: anthropicModel(cfg.ANTHROPIC_API_KEY!, cfg.AI_MODEL), modelName: cfg.AI_MODEL,
-        maxPerPrPerDay: cfg.AI_MAX_REVIEWS_PER_PR_PER_DAY, maxPerRepoPerDay: cfg.AI_MAX_REVIEWS_PER_REPO_PER_DAY, log,
-      }, prId, { force });
-      log('review', { pr: String(prId), outcome });
+      try {
+        const outcome = await runPrReview({
+          db, gh: ghClient!, model: anthropicModel(cfg.ANTHROPIC_API_KEY!, cfg.AI_MODEL), modelName: cfg.AI_MODEL,
+          maxPerPrPerDay: cfg.AI_MAX_REVIEWS_PER_PR_PER_DAY, maxPerRepoPerDay: cfg.AI_MAX_REVIEWS_PER_REPO_PER_DAY, log,
+        }, prId, { force });
+        await countJob('review', outcome);
+        log('review', { pr: String(prId), outcome });
+      } catch (error) {
+        await countJob('review', 'error');
+        throw error;
+      }
     })
   : null;
 const relayer = cfg.RELAYER_SECRET
@@ -82,6 +95,7 @@ if (relayer) void runRelayer(deps.pulls, relayer, ac.signal, 5000, log);
 else log('relayer disabled: RELAYER_SECRET not set (testnet/dev only; mainnet needs a KMS signer)');
 
 // Reminders are real issue comments when GitHub is configured; otherwise they fail without being marked as sent.
+const commenter = ghClient ? githubIssueCommenter({ db, gh: ghClient }) : { comment: async () => notConfigured() };
 const reminderTimer = setInterval(() => {
   sendRefundReminders({ db, graceMs: 72 * 3600e3, webUrl: cfg.WEB_PUBLIC_URL, log, commenter: ghClient ? githubIssueCommenter({ db, gh: ghClient }) : { comment: async () => notConfigured() } })
     .catch((e) => log('reminders skipped', e instanceof Error ? e.message : String(e)));
@@ -113,12 +127,18 @@ const webhookDeps = (jobLog: (msg: string, extra?: unknown) => void) => ({
 });
 const w = webhookWorker(cfg.REDIS_URL, async (job) => {
   const jobLog = deliveryLog(job.deliveryId);
-  const result = await dispatchWebhook(webhookDeps(jobLog) as never, job.event, job.payload);
-  jobLog('webhook handled', { id: job.id, deliveryId: job.deliveryId, event: job.event, result });
+  try {
+    const result = await dispatchWebhook(webhookDeps(jobLog) as never, job.event, job.payload);
+    await countJob('webhook', result.startsWith('ignored') ? 'ignored' : 'success');
+    jobLog('webhook handled', { id: job.id, deliveryId: job.deliveryId, event: job.event, result });
+  } catch (error) {
+    await countJob('webhook', 'error');
+    throw error;
+  }
 });
 w.worker.on('failed', (j, e) => deliveryLog(j?.data.deliveryId ?? j?.data.id)('webhook job failed', { id: j?.id, error: e.message }));
 // every chain event for a bounty refreshes its GitHub card (coalesced per batch; releases announce payout)
 const onApplied = sync ? handleApplied(sync, cfg.EXPLORER_TX_URL_TEMPLATE, log) : undefined;
 void runIndexer({ db, server: chain.server, contractId: cfg.BOUNTY_CONTRACT_ID, log, onAlert: (m) => void send([m]), ...(onApplied ? { onApplied } : {}) }, ac.signal);
-for (const s of ['SIGINT', 'SIGTERM'] as const) process.on(s, () => { ac.abort(); clearInterval(alertTimer); clearInterval(reminderTimer); void Promise.all([w.close(), reviewConsumer?.close(), reviews?.close()]).then(() => process.exit(0)); });
+for (const s of ['SIGINT', 'SIGTERM'] as const) process.on(s, () => { ac.abort(); clearInterval(alertTimer); clearInterval(reminderTimer); void Promise.all([w.close(), reviewConsumer?.close(), reviews?.close()]).then(() => { metricsRedis.disconnect(); cooldownRedis.disconnect(); process.exit(0); }); });
 log('worker started');
