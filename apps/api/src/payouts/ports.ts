@@ -19,7 +19,7 @@ export interface RelayerPort {
 }
 
 export interface Notifier {
-  /** best effort; failures must not break payouts */
+  /** best effort; failures must not break payouts or webhook processing */
   notify(bountyId: bigint, prNumber: number, message: string): Promise<void>;
 }
 

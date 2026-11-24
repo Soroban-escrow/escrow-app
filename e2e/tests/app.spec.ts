@@ -73,6 +73,19 @@ test.describe('public pages', () => {
     await expect(page.getByRole('heading', { name: 'Install the GitHub App' })).toBeVisible();
   });
 
+  test('status page renders reachability and indexer lag, linked from footer', async ({ page }) => {
+    await page.goto('/');
+    const statusLink = page.locator('footer').getByRole('link', { name: 'Status' });
+    await expect(statusLink).toBeVisible();
+    await statusLink.click();
+    await expect(page).toHaveURL('/status');
+    await expect(page.getByRole('heading', { name: 'Service Status' })).toBeVisible();
+    await expect(page.getByText('API Reachability')).toBeVisible();
+    await expect(page.getByText('Indexer Lag')).toBeVisible();
+    await expect(page.getByText('Last Updated')).toBeVisible();
+    await noSideScroll(page);
+  });
+
   test('filters by token, status, repository, and combinations', async ({ page }) => {
     await page.goto('/');
     await page.getByLabel('Token').selectOption('CUSDCE2E');
@@ -169,7 +182,7 @@ async function freshDispute() {
   const db = new pg.Client({ connectionString: E2E_DB });
   await db.connect();
   await db.query(`DELETE FROM "Dispute"`);
-  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','requested',now()-interval '40 hours',now())`);
+  await db.query(`INSERT INTO "Dispute"(id,"bountyId","openedByGithubId",reason,evidence,status,"createdAt","updatedAt") VALUES ('disputeaaaaaaaaaa1',3,55,'Merged PR was not paid','{}','REQUESTED',now()-interval '40 hours',now())`);
   await db.end();
 }
 
@@ -195,7 +208,7 @@ test.describe('admin', () => {
 });
 
 const fakeMe = (over: object = {}) => ({ id: 'u55', login: 'maint', wallet: null, isAdmin: false, csrfToken: 'csrf-scripted', ...over });
-const fakeDispute = (status: 'requested' | 'opened_onchain') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
+const fakeDispute = (status: 'REQUESTED' | 'OPENED_ONCHAIN') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
 const fakeStatus = { indexerLedger: 1, failedPayouts: 0, waitingPayouts: 0, openDisputes: 1 };
 
 test.describe('scripted Freighter signed flows', () => {
@@ -332,5 +345,106 @@ test.describe('scripted Freighter signed flows', () => {
     let built = false; await page.route('**/api/admin/disputes/disputeaaaaaaaaaa1/resolve/build', (r) => { built = true; return r.fulfill({ json: { xdr: 'xdr' } }); });
     await page.goto('/admin'); await page.getByLabel('Winner basis points').fill('5000'); await page.getByRole('button', { name: 'Resolve' }).click();
     await expect(page.getByRole('status')).toContainText('a winner address is required when winnerBps > 0'); expect(built).toBe(false);
+  });
+});
+
+test.describe('public profile page', () => {
+  test('shows paid bounties with tokens and explorer links', async ({ page }) => {
+    await page.goto('/u/paiduser');
+    await expect(page.getByRole('heading', { name: 'paiduser' })).toBeVisible();
+    await expect(page.getByText('Paid bounty')).toBeVisible();
+    await expect(page.getByText('10.00 COTHER')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'tx' })).toBeVisible();
+    await noSideScroll(page);
+  });
+
+  test('shows user with payouts in two different tokens', async ({ page }) => {
+    await page.goto('/u/multitoken');
+    await expect(page.getByRole('heading', { name: 'multitoken' })).toBeVisible();
+    await expect(page.getByText('Refunded bounty')).toBeVisible();
+    await expect(page.getByText('Disputed bounty')).toBeVisible();
+    await expect(page.getByText('12.00 USDC')).toBeVisible();
+    await expect(page.getByText('3.00 USDC')).toBeVisible();
+  });
+
+  test('shows empty state for user with no payments', async ({ page }) => {
+    await page.goto('/u/nopayments');
+    await expect(page.getByRole('heading', { name: 'nopayments' })).toBeVisible();
+    await expect(page.getByText('None yet.')).toBeVisible();
+  });
+
+  test('returns 404 for missing login', async ({ page }) => {
+    expect((await page.goto('/u/doesnotexist999'))?.status()).toBe(404);
+  });
+
+  test('mixed-case login normalizes to lowercase', async ({ page }) => {
+    await page.goto('/u/PaIdUsEr');
+    await expect(page.getByRole('heading', { name: 'paiduser' })).toBeVisible();
+    await expect(page.getByText('Paid bounty')).toBeVisible();
+  });
+});
+
+test.describe('bounty page status variations', () => {
+  test('OPEN status shows badge and stepper', async ({ page }) => {
+    await page.goto('/b/1');
+    await expect(page.locator('.status.open')).toBeVisible();
+    await expect(page.locator('.steps li.now')).toHaveText('In review');
+  });
+
+  test('RELEASED status shows paid badge and completed stepper', async ({ page }) => {
+    await page.goto('/b/4');
+    await expect(page.locator('.status.released')).toContainText('Paid');
+    await expect(page.locator('.steps li.done').last()).toHaveText('Paid');
+    await expect(page.getByText('PR #3: Paid')).toBeVisible();
+  });
+
+  test('REFUNDED status shows notice and badge', async ({ page }) => {
+    await page.goto('/b/5');
+    await expect(page.locator('.status.refunded')).toBeVisible();
+    await expect(page.getByText('Nothing was merged in time')).toBeVisible();
+  });
+
+  test('DISPUTED status shows notice and badge', async ({ page }) => {
+    await page.goto('/b/6');
+    await expect(page.locator('.status.disputed')).toBeVisible();
+    await expect(page.getByText('This bounty is under dispute')).toBeVisible();
+  });
+
+  test('RESOLVED status shows notice and badge', async ({ page }) => {
+    await page.goto('/b/7');
+    await expect(page.locator('.status.resolved')).toBeVisible();
+    await expect(page.getByText('An arbiter resolved a dispute')).toBeVisible();
+  });
+});
+
+test.describe('admin access control', () => {
+  test('non-admin sees refusal on admin page', async ({ page }) => {
+    await signIn(page, 'user');
+    await page.goto('/admin');
+    await expect(page.locator('p[role="alert"]')).toContainText('Admins only');
+  });
+
+  test('non-admin gets 403 from admin API endpoints', async ({ page }) => {
+    await signIn(page, 'user');
+    const response = await page.request.get('http://localhost:3100/api/admin/status');
+    expect(response.status()).toBe(403);
+  });
+
+  test('anonymous visitor redirected to sign in', async ({ page }) => {
+    await page.goto('/admin');
+    await expect(page.locator('p[role="alert"]')).toContainText('Admins only');
+  });
+});
+
+test.describe('address truncation on small screens', () => {
+  test('long addresses do not cause horizontal scroll at 320px', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await signIn(page, 'user');
+    await page.goto('/me');
+    await page.route('**/api/auth/me', (r) => r.fulfill({ json: fakeMe({ wallet: 'GVERYLONGADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }) }));
+    await page.route('**/api/me/funded', (r) => r.fulfill({ json: [] }));
+    await page.reload();
+    await expect(page.locator('code[data-address]')).toBeVisible();
+    await noSideScroll(page);
   });
 });

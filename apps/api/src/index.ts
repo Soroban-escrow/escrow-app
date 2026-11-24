@@ -3,8 +3,9 @@ import { createDb } from './db.js';
 import { createChain } from './chain/client.js';
 import { webhookProducer } from './worker/queue.js';
 import { healthReport } from './ops/health.js';
+import { collectMetrics } from './ops/metrics.js';
 import { createGithubClient } from './github/client.js';
-import { githubNotifier } from './github/sync.js';
+import { githubIssueCommenter, githubNotifier } from './github/sync.js';
 import { onWalletLinked } from './payouts/payout.js';
 import { buildServer, type DeliveryStore } from './server.js';
 
@@ -18,6 +19,7 @@ const store: DeliveryStore = {
     try { await db.webhookDelivery.create({ data: { id, event } }); return true; }
     catch (e) { if ((e as { code?: string }).code === 'P2002') return false; throw e; }
   },
+  remove: async (id) => { await db.webhookDelivery.deleteMany({ where: { id } }); },
   enqueue: (id, event, payload) => producer.enqueue(id, event, payload),
 };
 
@@ -31,14 +33,18 @@ const payoutDeps = {
 };
 
 const app = await buildServer(cfg, store, {
-  db, csrfSecret: cfg.CSRF_SECRET, onWalletLinked: (githubId) => onWalletLinked(payoutDeps, githubId),
+  db, csrfSecret: cfg.CSRF_SECRET,
+  adminGithubIds: (cfg.ADMIN_GITHUB_IDS ?? '').split(',').filter(Boolean).map(BigInt),
+  onWalletLinked: (githubId) => onWalletLinked(payoutDeps, githubId),
+  commenter: gh ? githubIssueCommenter({ db, gh }) : { comment: async () => { throw new Error('GitHub App is not configured'); } },
   ...(cfg.GITHUB_CLIENT_ID && cfg.GITHUB_CLIENT_SECRET ? { login: { db, clientId: cfg.GITHUB_CLIENT_ID, clientSecret: cfg.GITHUB_CLIENT_SECRET, callbackUrl: `${cfg.API_PUBLIC_URL}/auth/callback`, webUrl: cfg.WEB_PUBLIC_URL, secret: cfg.SESSION_SECRET, adminGithubIds: (cfg.ADMIN_GITHUB_IDS ?? '').split(',').filter(Boolean).map(BigInt) } } : {}),
   chain: { ...chain, getBounty: async (id) => ({ status: (await chain.getBounty(id)).status.tag }) },
   tokens: [
     ...(cfg.TOKEN_USDC_CONTRACT_ID ? [{ address: cfg.TOKEN_USDC_CONTRACT_ID, symbol: 'USDC', decimals: 7 }] : []),
     ...(cfg.TOKEN_XLM_CONTRACT_ID ? [{ address: cfg.TOKEN_XLM_CONTRACT_ID, symbol: 'XLM', decimals: 7 }] : []),
   ],
-}, () => healthReport({ db, latestLedger: async () => (await chain.server.getLatestLedger()).sequence }));
+}, () => healthReport({ db, latestLedger: async () => (await chain.server.getLatestLedger()).sequence }),
+  () => collectMetrics(db, async () => (await chain.server.getLatestLedger()).sequence, cfg.REDIS_URL));
 // on Vercel the function wrapper in api/index.js hands requests to the app instead of listening
 if (!process.env.VERCEL) await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 export default app;

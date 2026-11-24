@@ -37,9 +37,36 @@ describe('relayerPass', () => {
     expect(await relayerPass(deps(), r, retryAt, () => t)).toBe(2);
     expect((await db.payout.findUniqueOrThrow({ where: { idempotencyKey: 'release:2' } })).status).toBe('CONFIRMED');
     expect(retryAt.size).toBe(1);
+    const backing = await db.payout.findUniqueOrThrow({ where: { idempotencyKey: 'release:1' } });
+    expect(backing.nextAttemptAt?.getTime()).toBe(t + backoffMs(1));
     expect(await relayerPass(deps(), r, retryAt, () => t + 500)).toBe(0); // still backing off
     t += backoffMs(2) + 1;
     expect(await relayerPass(deps(), r, retryAt, () => t)).toBe(1);
+  });
+
+  it('does not retry early after a restart, even with fresh in-memory state', async () => {
+    let t = 2_000_000;
+    const attempts: bigint[] = [];
+    const r: RelayerPort = {
+      submitRelease: async (id) => { attempts.push(id); if (id === 1n) throw new Error('rpc still down'); return 'H2'; },
+      waitForTx: async () => 'SUCCESS',
+    };
+    // first process: payout 1 fails transiently and records its backoff deadline
+    expect(await relayerPass(deps(), r, new Map(), () => t)).toBe(2);
+    const row = await db.payout.findUniqueOrThrow({ where: { idempotencyKey: 'release:1' } });
+    expect(row.nextAttemptAt).toBeInstanceOf(Date);
+    expect(row.nextAttemptAt!.getTime()).toBeGreaterThan(t);
+    const beforeRestart = attempts.filter((id) => id === 1n).length;
+
+    // simulate a deploy: a brand-new in-memory Map, with the RPC still failing
+    const freshMap = new Map<string, number>();
+    expect(await relayerPass(deps(), r, freshMap, () => t + 1000)).toBe(0);
+    expect(freshMap.size).toBe(0); // no early retry was scheduled
+    expect(attempts.filter((id) => id === 1n)).toHaveLength(beforeRestart);
+
+    // once the persisted deadline passes, the payout is retried
+    expect(await relayerPass(deps(), r, freshMap, () => row.nextAttemptAt!.getTime() + 1)).toBe(1);
+    expect(attempts.filter((id) => id === 1n)).toHaveLength(beforeRestart + 1);
   });
   it('backoff grows and is capped', () => {
     expect(backoffMs(1)).toBe(2000);

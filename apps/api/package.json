@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "typecheck": "tsc -p .",
     "eval:ai": "tsx eval/run.ts",
     "worker": "tsx src/worker/main.ts",
+    "openapi:check": "tsx src/routes/openapi-check.ts",
     "sync:installations": "tsx src/worker/sync-installations.ts",
     "db:seed": "prisma db seed",
     "reindex": "tsx src/indexer/reindex.ts",
@@ -29,11 +30,13 @@
     "fastify": "^5.12.7",
     "ioredis": "^6.0.0",
     "pg": "8.23.1",
+    "pino": "10.4.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
+    "@vitest/coverage-v8": "^5.0.5",
     "prisma": "7.10.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

@@ -8,13 +8,24 @@ const HOUR = 3600e3;
 /**
  * Refund reminders (BUILD_SPEC 11.7): one 48 h before the refund window opens (deadline + grace),
  * one when it opens. Each is sent at most once, recorded in the audit log.
+ *
+ * A failing comment (e.g. a deleted issue returning 404) must not stop the rest of the pass:
+ * failures are logged per bounty and that bounty is left unmarked so the next tick retries it.
  */
 export async function sendRefundReminders(
-  d: { db: Db; commenter: IssueCommenter; graceMs: number; webUrl: string; now?: () => Date },
+  d: {
+    db: Db;
+    commenter: IssueCommenter;
+    graceMs: number;
+    webUrl: string;
+    now?: () => Date;
+    log?: (msg: string, extra?: unknown) => void;
+  },
 ): Promise<string[]> {
   const now = (d.now ?? (() => new Date()))().getTime();
-  const open = await d.db.bounty.findMany({ where: { status: 'OPEN' } });
+  const open = await d.db.bounty.findMany({ where: { status: 'OPEN' }, orderBy: { id: 'asc' } });
   const sent: string[] = [];
+  const log = d.log ?? ((msg: string, extra?: unknown) => console.error(msg, extra ?? ''));
   for (const b of open) {
     const opensAt = b.deadline.getTime() + d.graceMs;
     const kind = now >= opensAt ? 'open' : now >= opensAt - 48 * HOUR ? 'soon' : null;
@@ -25,10 +36,15 @@ export async function sendRefundReminders(
     const body = kind === 'soon'
       ? `The refund window for this bounty opens in under 48 hours. If a PR was merged but not yet paid, resolve it at ${d.webUrl}/b/${b.id}; otherwise the maintainer may reclaim the funds.`
       : `The refund window for this bounty is now open. The maintainer can reclaim the funds at ${d.webUrl}/me. A merged PR can still be released until then.`;
-    // record first: a failed comment is retried next tick only if we did not mark it, so mark after success
-    await d.commenter.comment(b.id, body);
-    await d.db.auditLog.create({ data: { actor: 'system', action, target, data: {} } });
-    sent.push(`${kind}:${b.id}`);
+    try {
+      // record first: a failed comment is retried next tick only if we did not mark it, so mark after success
+      await d.commenter.comment(b.id, body);
+      await d.db.auditLog.create({ data: { actor: 'system', action, target, data: {} } });
+      sent.push(`${kind}:${b.id}`);
+    } catch (e) {
+      // one bad bounty must not hide reminders for every bounty after it
+      log('refund reminder failed for bounty', { bountyId: String(b.id), action, error: e instanceof Error ? e.message : String(e) });
+    }
   }
   return sent;
 }

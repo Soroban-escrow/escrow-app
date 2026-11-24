@@ -16,7 +16,10 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
   const [step, setStep] = useState<'idle' | 'signing' | 'waiting'>('idle');
   const [err, setErr] = useState<string | null>(null);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
+ feat/bounty-disputes-funding-earnings-wallet
   const [feeBps, setFeeBps] = useState<number | null>(null);
+
+ fresh-build
   const [txHash, setTxHash] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -52,7 +55,7 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
       if (!b.ok) throw new WalletUxError(errorText(bj.error?.code, bj.error?.message ?? 'Could not prepare the transaction.'));
       setStep('signing');
       const signed = await signTx(bj.xdr, address, PASSPHRASE);
-      const s = await fetch('/api/tx/submit', { method: 'POST', headers: h, body: JSON.stringify({ xdr: signed, address }) });
+      const s = await fetch('/api/tx/submit', { method: 'POST', headers: h, body: JSON.stringify({ xdr: signed, address, intentId }) });
       const sj = await s.json();
       if (!s.ok) throw new WalletUxError(errorText(sj.error?.code, 'The network rejected the transaction.'));
       setTxHash(sj.hash);

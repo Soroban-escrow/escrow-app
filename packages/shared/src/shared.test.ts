@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { fee, fromBaseUnits, net, parseCommand, parseStatus, portion, toBaseUnits } from './index.js';
+import {
+  AUDIENCE_LABEL, COMMANDS, WHERE_LABEL, fee, formatCommandHelp, formatCommandTable, fromBaseUnits, net,
+  parseCommand, parseStatus, portion, toBaseUnits,
+} from './index.js';
 
 describe('amounts', () => {
   it('converts both ways', () => {
@@ -69,5 +72,59 @@ describe('parseCommand', () => {
     expect(parseCommand('/bounty review')).toEqual({ kind: 'review' });
     expect(parseCommand('/bounty')).toEqual({ kind: 'help' });
     expect(parseCommand('/bounty help')).toEqual({ kind: 'help' });
+  });
+  it.each([
+    ['/bounty\t50\tUSDC\t14d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/bounty 50 USDC 14d\r\nignored text', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/BOUNTY 50 USDC 14d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/bounty 50 USDC 999d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 999 }],
+    ['/bounty 50usdc', { kind: 'error', message: 'Invalid amount "50usdc".' }],
+    ['/bounty 50 USDC 14 d', { kind: 'error', message: 'Unrecognised "14". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 50 USDC 0d', { kind: 'error', message: 'Duration must be at least 1 day.' }],
+    ['/bounty 50 USDC 14d extra', { kind: 'error', message: 'Unrecognised "extra". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 50 USDC 🚀', { kind: 'error', message: 'Unrecognised "🚀". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 1.00000001', { kind: 'error', message: 'Invalid amount "1.00000001".' }],
+    ['/bounty +5', { kind: 'error', message: 'Invalid amount "+5".' }],
+    ['/bounty -5', { kind: 'error', message: 'Invalid amount "-5".' }],
+  ])('handles edge case %#', (input, expected) => {
+    expect(parseCommand(input)).toEqual(expected);
+  });
+  it('accepts very long dispute reasons without truncation', () => {
+    const reason = 'x'.repeat(10_000);
+    expect(parseCommand(`/bounty dispute ${reason}`)).toEqual({ kind: 'dispute', reason });
+  });
+});
+
+describe('command metadata (#135)', () => {
+  it('documents every command the parser accepts, exactly once', () => {
+    const kinds = COMMANDS.map((c) => c.kind);
+    expect(new Set(kinds).size).toBe(kinds.length);
+    expect([...kinds].sort()).toEqual(['dispute', 'fund', 'help', 'review']);
+  });
+
+  it('gives every command an example that parses to that command', () => {
+    for (const c of COMMANDS) {
+      expect(c.syntax.startsWith('/bounty'), c.syntax).toBe(true);
+      expect(parseCommand(c.example)?.kind, c.example).toBe(c.kind);
+      expect(c.description.length, c.kind).toBeGreaterThan(10);
+      expect(AUDIENCE_LABEL[c.audience], c.kind).toBeTruthy();
+      expect(WHERE_LABEL[c.where], c.kind).toBeTruthy();
+    }
+  });
+
+  it('renders the bot help from the metadata, including /bounty review', () => {
+    const help = formatCommandHelp();
+    expect(help.split('\n')[0]).toBe('**SkillEscrow commands**');
+    for (const c of COMMANDS) {
+      expect(help).toContain(`\`${c.syntax}\``);
+      expect(help).toContain(c.description);
+      expect(help).toContain(AUDIENCE_LABEL[c.audience]);
+    }
+    expect(help).toContain('`/bounty review`');
+  });
+
+  it('escapes pipes in table cells so Markdown columns stay aligned', () => {
+    const table = formatCommandTable([{ ...COMMANDS[0]!, syntax: '/bounty a|b', example: '/bounty a|b' }]);
+    expect(table).toContain('`/bounty a\\|b`');
   });
 });

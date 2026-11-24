@@ -1,12 +1,19 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+ feat/bounty-disputes-funding-earnings-wallet
 import { apiGetResult, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
 import DisputeRequest from './DisputeRequest';
+
+import { CopyButton } from '@/components/CopyButton';
+import { WalletReminder } from '@/components/WalletReminder';
+import { apiGet, apiGetResult, daysLeft, explorerTx, money, type TokenInfo } from '@/lib/api';
+ fresh-build
 
 interface Review { verdict: string; score: number; flags: string[] }
 interface Detail {
   id: string; issueNumber: number; issueTitle: string; issueUrl: string; amount: string; token: string; status: string;
   deadline: string; maintainer: string; criteria: string[]; relayerAllowed: boolean; feeBps: number; repo: { fullName: string };
+  fundTx: string; closeTx: string | null;
   prs: { id: string; number: number; authorLogin: string; state: string; reviews: Review[] }[];
   payouts: { status: string; prNumber: number; txHash: string | null }[];
 }
@@ -32,19 +39,32 @@ function progress(b: Detail): number {
   return 0;
 }
 
+/** Step set and current position for the progress stepper, including terminal states. */
+function stepper(b: Detail): { steps: readonly string[]; done: number; active: boolean } {
+  if (b.status === 'REFUNDED') return { steps: ['Funded', 'Refunded'], done: 2, active: false };
+  if (b.status === 'DISPUTED') return { steps: ['Funded', 'Disputed'], done: 1, active: true };
+  if (b.status === 'RESOLVED') return { steps: ['Funded', 'Disputed', 'Resolved'], done: 3, active: false };
+  const done = progress(b);
+  return { steps: STEPS, done, active: b.status === 'OPEN' };
+}
+
 export default async function Bounty({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const response = await apiGetResult<Detail>(`/bounties/${encodeURIComponent(id)}`);
   if (response.kind === 'not_found') notFound();
   if (response.kind === 'unavailable') return <><h1>Temporarily unavailable</h1><p className="muted">The bounty service is unavailable. This is not a missing page; please retry shortly.</p></>;
   const b = response.data;
+ feat/bounty-disputes-funding-earnings-wallet
   const config = await apiGetResult<{ tokens: TokenInfo[] }>('/config');
   const tokens: TokenInfo[] = config.kind === 'ok' ? config.data.tokens : [];
+
+  const config = await apiGet<{ tokens: TokenInfo[] }>('/config');
+ fresh-build
   const prs = [...b.prs].sort((x, y) => {
     const rx = x.reviews[0], ry = y.reviews[0];
     return (ORDER.indexOf(rx?.verdict ?? 'needs_human') - ORDER.indexOf(ry?.verdict ?? 'needs_human')) || ((ry?.score ?? 0) - (rx?.score ?? 0));
   });
-  const done = progress(b);
+  const { steps: stepSet, done: stepDone, active: stepActive } = stepper(b);
   const deadline = new Date(b.deadline);
 
   return (
@@ -62,15 +82,31 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
         <div><dt>Time left</dt><dd>{daysLeft(b.deadline)}</dd></div>
         <div><dt>Release on merge</dt><dd>{b.relayerAllowed ? 'automatic' : 'maintainer signs'}</dd></div>
         <div><dt>Fee</dt><dd>{b.feeBps / 100}% of payout</dd></div>
+        {b.fundTx && (
+          <div>
+            <dt>Funded in tx</dt>
+            <dd><a className="mono" href={explorerTx(b.fundTx)} rel="noreferrer noopener">{b.fundTx.slice(0, 8)}… ↗</a></dd>
+          </div>
+        )}
+        {b.closeTx && (
+          <div>
+            <dt>Closed in tx</dt>
+            <dd><a className="mono" href={explorerTx(b.closeTx)} rel="noreferrer noopener">{b.closeTx.slice(0, 8)}… ↗</a></dd>
+          </div>
+        )}
       </dl>
 
       <ol className="steps" aria-label="Progress">
-        {STEPS.map((s, i) => (
-          <li key={s} className={i < done ? 'done' : i === done && b.status === 'OPEN' ? 'now' : ''} aria-current={i === done && b.status === 'OPEN' ? 'step' : undefined}>{s}</li>
+        {stepSet.map((s, i) => (
+          <li key={s} className={i < stepDone ? 'done' : i === stepDone && stepActive ? 'now' : ''} aria-current={i === stepDone && stepActive ? 'step' : undefined}>{s}</li>
         ))}
       </ol>
       {NOTICE[b.status] && <p className="notice">{NOTICE[b.status]}</p>}
+ feat/bounty-disputes-funding-earnings-wallet
       {(b.status === 'OPEN' || b.status === 'DISPUTED') && <DisputeRequest bountyId={b.id} />}
+
+      <WalletReminder prAuthors={b.prs.map((p) => p.authorLogin)} />
+ fresh-build
 
       {b.criteria.length > 0 && (
         <>
@@ -112,7 +148,12 @@ export default async function Bounty({ params }: { params: Promise<{ id: string 
           {b.payouts.map((p, i) => (
             <li key={i}>
               <span>PR #{p.prNumber}: {PAYOUT[p.status] ?? p.status}</span>
-              {p.txHash && <a className="mono" href={explorerTx(p.txHash)} rel="noreferrer noopener">tx {p.txHash.slice(0, 8)}… ↗</a>}
+              {p.txHash && (
+                <span>
+                  <a className="mono" href={explorerTx(p.txHash)} rel="noreferrer noopener" title={p.txHash}>tx {p.txHash.slice(0, 8)}… ↗</a>
+                  <CopyButton value={p.txHash} label={`transaction hash for PR #${p.prNumber}`} />
+                </span>
+              )}
             </li>
           ))}
         </ul>

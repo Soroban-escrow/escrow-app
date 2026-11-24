@@ -1,8 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
+ feat/bounty-disputes-funding-earnings-wallet
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
 import { explorerTx, money, type TokenInfo } from '@/lib/api';
+
+import { explorerTx, formatAddress, money, refundWindow, type TokenInfo } from '@/lib/api';
+import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
+import { CopyButton } from '@/components/CopyButton';
+ fresh-build
 
 interface Funded { id: string; issueTitle: string; amount: string; token: string; status: string; deadline: string }
 interface Earning { id: string; status: string; prNumber: number; txHash: string | null; bounty: { issueTitle: string; amount: string; token: string; feeBps: number } }
@@ -14,7 +20,10 @@ export default function Account() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
+ feat/bounty-disputes-funding-earnings-wallet
   const [earnings, setEarnings] = useState<Earning[]>([]);
+
+ fresh-build
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [submitted, setSubmitted] = useState<string | null>(null);
 
@@ -79,7 +88,7 @@ export default function Account() {
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
       <h1>{me.login}</h1>
       <h2>Wallet</h2>
-      {me.wallet ? <p>Linked: <code>{me.wallet}</code></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
+      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code><CopyButton value={me.wallet} label="wallet address" /></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
       <button onClick={link} disabled={busy}>{busy ? 'Waiting for Freighter…' : me.wallet ? 'Change wallet' : 'Link wallet'}</button>
       {msg && <p role="status" className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
       <h2>Funded bounties</h2>
@@ -87,7 +96,11 @@ export default function Account() {
         <div key={f.id} className="card">
           <div className="row"><a href={`/b/${f.id}`}>{f.issueTitle || `Bounty ${f.id}`}</a><span className="badge">{f.status}</span></div>
           <div className="row muted"><span className="amount">{money(f.amount, f.token, tokens)}</span>
+ feat/bounty-disputes-funding-earnings-wallet
             {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
+
+            {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> {refundWindow(f.deadline).open ? <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button> : <small>{refundWindow(f.deadline).label}</small>}</span>}</div>
+ fresh-build
         </div>
       ))}
       <h2>Contributor earnings</h2>

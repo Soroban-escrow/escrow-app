@@ -11,7 +11,7 @@ const env = {
   LOG_LEVEL: 'silent',
 };
 
-const store: DeliveryStore = { insert: async () => true, enqueue: async () => undefined };
+const store: DeliveryStore = { insert: async () => true, remove: async () => {}, enqueue: async () => undefined };
 
 const unhealthy = { ok: false, db: true, rpc: false, redis: true, indexerLagLedgers: null };
 

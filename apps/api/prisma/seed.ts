@@ -1,4 +1,4 @@
-import { BountyStatus, PayoutStatus, type PrismaClient } from '@prisma/client';
+import { BountyStatus, DisputeStatus, PullRequestState, PayoutStatus, type PrismaClient } from '@prisma/client';
 import { createDb } from '../src/db.js';
 import { loadDotEnv } from '../src/config.js';
 
@@ -128,14 +128,17 @@ export async function seedDemoData(db: PrismaClient): Promise<void> {
     });
   }
 
-  const prs = [
+  const prs: Array<{
+    id: bigint; number: number; authorGithubId: bigint; authorLogin: string; headSha: string;
+    state: PullRequestState; mergedAt: Date | null; bountyId: bigint; verdict: string; score: number;
+  }> = [
     {
       id: 3001n,
       number: 11,
       authorGithubId: 5002n,
       authorLogin: 'alice-dev',
       headSha: 'abc1111',
-      state: 'open',
+      state: PullRequestState.OPEN,
       mergedAt: null,
       bountyId: 1n,
       verdict: 'STRONG',
@@ -147,7 +150,7 @@ export async function seedDemoData(db: PrismaClient): Promise<void> {
       authorGithubId: 5003n,
       authorLogin: 'bob-dev',
       headSha: 'def2222',
-      state: 'closed',
+      state: PullRequestState.CLOSED,
       mergedAt: now,
       bountyId: 2n,
       verdict: 'STRONG',
@@ -228,14 +231,14 @@ export async function seedDemoData(db: PrismaClient): Promise<void> {
 
   await db.dispute.upsert({
     where: { id: 'seed-dispute-4' },
-    update: { status: 'OPEN' },
+    update: { status: DisputeStatus.REQUESTED },
     create: {
       id: 'seed-dispute-4',
       bountyId: 4n,
       openedByGithubId: 5002n,
       reason: 'Acceptance criteria were met before deadline; requesting arbiter review.',
       evidence: { prUrl: 'https://github.com/soroban-escrow-demo/demo-repo/pull/14' },
-      status: 'OPEN',
+      status: DisputeStatus.REQUESTED,
     },
   });
 }

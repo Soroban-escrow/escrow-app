@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderCard, esc, labelFor } from '../src/github/card.js';
-import { parseCriteria } from '../src/github/criteria.js';
+import { parseCriteria, criteriaEqual, criteriaChanged, formatCriteriaChangeComment } from '../src/github/criteria.js';
 
 describe('parseCriteria', () => {
   it('reads the Acceptance criteria section', () => {
@@ -15,6 +15,58 @@ describe('parseCriteria', () => {
   });
   it('handles CRLF', () => {
     expect(parseCriteria('## Acceptance criteria\r\n- [ ] a\r\n- [ ] b\r\n')).toEqual(['a', 'b']);
+  });
+});
+
+describe('criteria comparison and change detection', () => {
+  it('detects unchanged criteria', () => {
+    expect(criteriaEqual(['a', 'b'], ['a', 'b'])).toBe(true);
+    expect(criteriaChanged(['a', 'b'], ['a', 'b'])).toBe(false);
+    expect(criteriaEqual([], [])).toBe(true);
+    expect(criteriaChanged([], [])).toBe(false);
+    expect(criteriaEqual(null, [])).toBe(true);
+    expect(criteriaChanged(null, [])).toBe(false);
+    expect(criteriaEqual(undefined, undefined)).toBe(true);
+    expect(criteriaChanged(undefined, undefined)).toBe(false);
+  });
+
+  it('detects changed criteria', () => {
+    // items added or removed
+    expect(criteriaChanged(['a'], ['a', 'b'])).toBe(true);
+    expect(criteriaChanged(['a', 'b'], ['a'])).toBe(true);
+    expect(criteriaChanged([], ['a'])).toBe(true);
+    expect(criteriaChanged(['a'], [])).toBe(true);
+    // items modified
+    expect(criteriaChanged(['a', 'b'], ['a', 'c'])).toBe(true);
+    // order changed
+    expect(criteriaChanged(['a', 'b'], ['b', 'a'])).toBe(true);
+    expect(criteriaEqual(['a', 'b'], ['b', 'a'])).toBe(false);
+  });
+
+  it('formats criteria change comments with previous and new criteria', () => {
+    const comment = formatCriteriaChangeComment(['old one'], ['new one', 'new two']);
+    expect(comment).toContain('The acceptance criteria for this bounty have been updated.');
+    expect(comment).toContain('**Previous criteria:**');
+    expect(comment).toContain('- old one');
+    expect(comment).toContain('**New criteria:**');
+    expect(comment).toContain('- new one');
+    expect(comment).toContain('- new two');
+  });
+
+  it('handles empty criteria when formatting comments', () => {
+    const commentFromNone = formatCriteriaChangeComment([], ['new one']);
+    expect(commentFromNone).toContain('**Previous criteria:** _None_');
+    expect(commentFromNone).toContain('- new one');
+
+    const commentToNone = formatCriteriaChangeComment(['old one'], []);
+    expect(commentToNone).toContain('- old one');
+    expect(commentToNone).toContain('**New criteria:** _None_');
+  });
+
+  it('escapes untrusted markdown/HTML in criteria change comments', () => {
+    const comment = formatCriteriaChangeComment(['clean'], ['<script>alert(1)</script> @everyone']);
+    expect(comment).not.toMatch(/(^|[^\\])</);
+    expect(comment).not.toMatch(/(^|[^\\])@everyone/);
   });
 });
 
