@@ -436,18 +436,21 @@ All responses use one error shape: `{ "error": { "code": "…", "message": "…"
 Mutations need a session cookie **and** an `X-CSRF-Token` header. Rate limits are per signed-in user,
 falling back to per IP.
 
+**Private repositories.** Public reads (`/bounties`, `/bounties/:id`, `/filters`, `/users/:login`)
+*exclude* bounties on private repositories rather than redacting their fields. A private bounty
+detail therefore returns the same 404 as a missing bounty, and its repo, title, criteria and token
+never appear in lists or filters. Exclusion was chosen over redaction because it removes any chance
+of leaking sensitive metadata. The maintainer still sees those bounties on the session-only
+`/me/funded` and `/me/earnings`.
+
 <details>
 <summary><b>Endpoint reference</b></summary>
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
- feat/bounty-metadata-ai-accessibility
-| `GET` | `/health` | — | db, RPC, Redis, indexer lag (503 when unhealthy) |
-
 | `GET` | `/livez` | — | liveness: process only, always 200 while the server is up |
 | `GET` | `/readyz` | — | readiness: db, RPC, Redis, indexer lag (503 when unhealthy) |
 | `GET` | `/health` | — | alias of `/readyz` |
- fresh-build
 | `GET` | `/config` | — | live escrow fee, duration settings, and allowed token metadata/limits |
 | `GET` | `/filters` | — | available bounty statuses, tokens, and repositories |
 | `GET` | `/auth/login`, `/auth/callback` | — | GitHub OAuth (PKCE) |

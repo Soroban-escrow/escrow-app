@@ -43,12 +43,8 @@ const app = await buildServer(cfg, store, {
     ...(cfg.TOKEN_USDC_CONTRACT_ID ? [{ address: cfg.TOKEN_USDC_CONTRACT_ID, symbol: 'USDC', decimals: 7 }] : []),
     ...(cfg.TOKEN_XLM_CONTRACT_ID ? [{ address: cfg.TOKEN_XLM_CONTRACT_ID, symbol: 'XLM', decimals: 7 }] : []),
   ],
- feat/bounty-metadata-ai-accessibility
-}, () => healthReport({ db, latestLedger: async () => (await chain.server.getLatestLedger()).sequence }));
-
 }, () => healthReport({ db, latestLedger: async () => (await chain.server.getLatestLedger()).sequence }),
   () => collectMetrics(db, async () => (await chain.server.getLatestLedger()).sequence, cfg.REDIS_URL));
- fresh-build
 // on Vercel the function wrapper in api/index.js hands requests to the app instead of listening
 if (!process.env.VERCEL) await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 export default app;

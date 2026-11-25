@@ -1,13 +1,8 @@
 'use client';
 import { use, useCallback, useEffect, useState } from 'react';
 import { errorText } from '@/lib/errors';
- feat/bounty-metadata-ai-accessibility
-import { connect, signTx, WalletUxError } from '@/lib/freighter';
-import { money, type TokenInfo } from '@/lib/api';
-
-import { connect, signTx, WalletUxError } from '@/lib/wallet';
 import { explorerTx, money, type TokenInfo } from '@/lib/api';
- fresh-build
+import { connect, signTx, WalletUxError } from '@/lib/wallet';
 
 interface Intent { state: 'open' | 'expired' | 'used'; repo: string | null; issueNumber: number; token: string; amount: string; durationDays: number; bountyId: string | null }
 interface Config { feeBps: number | null; tokens: TokenInfo[] }
@@ -21,14 +16,8 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
   const [step, setStep] = useState<'idle' | 'signing' | 'waiting'>('idle');
   const [err, setErr] = useState<string | null>(null);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
- feat/bounty-metadata-ai-accessibility
-
- feat/bounty-disputes-funding-earnings-wallet
   const [feeBps, setFeeBps] = useState<number | null>(null);
-
- fresh-build
   const [txHash, setTxHash] = useState<string | null>(null);
- fresh-build
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/intents/${encodeURIComponent(intentId)}`);
@@ -38,11 +27,7 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
   useEffect(() => {
     void load();
     fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then((m) => setCsrf(m?.csrfToken ?? null), () => setCsrf(null));
- feat/bounty-metadata-ai-accessibility
-    fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
-
-    fetch('/api/config').then((r) => (r.ok ? r.json() as Promise<Config> : null)).then((c) => { setTokens(c?.tokens ?? []); setFeeBps(c?.feeBps ?? null); }, () => { setTokens([]); setFeeBps(null); });
- fresh-build
+    fetch('/api/config').then((r) => (r.ok ? (r.json() as Promise<Config>) : null)).then((c) => { setTokens(c?.tokens ?? []); setFeeBps(c?.feeBps ?? null); }, () => { setTokens([]); setFeeBps(null); });
   }, [load]);
 
   // after submitting, wait for the indexer to mark the intent used, then go to the bounty
@@ -87,10 +72,7 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
       <h1>Fund bounty</h1>
       <section className="panel">
       <p className="big locked" style={{ display: 'inline-block', margin: 0 }} title={tokens.some((t) => t.address === intent.token) ? undefined : `Unknown token ${intent.token}`}>{amount}</p>
- feat/bounty-metadata-ai-accessibility
-
       {feeBps !== null && <p className="muted">Platform fee: {(feeBps / 100).toFixed(2)}% · deducted from the contributor payout.</p>}
- fresh-build
       <p className="muted">Held in escrow for {intent.durationDays} days, then refundable if nothing is merged.</p>
       {intent.state === 'expired' && <p className="error" role="alert">{errorText('intent_expired', 'Expired.')}</p>}
       {intent.state === 'used' && <p className="ok">{errorText('intent_used', 'Funded.')} {intent.bountyId && <a href={`/b/${intent.bountyId}`}>View the bounty</a>}</p>}

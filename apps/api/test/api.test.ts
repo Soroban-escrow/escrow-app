@@ -183,11 +183,7 @@ describe('public reads', () => {
     expect((await a.inject('/filters')).json()).toEqual({ statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: ['TOKEN_A', 'TOKEN_B'], repositories: ['o/Other', 'o/Repo'] });
   });
   it('publishes live contract fee and token precision and limits', async () => {
- feat/bounty-metadata-ai-accessibility
-    const a = await buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, {
-
     const a = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
- fresh-build
       db, csrfSecret: cfg.CSRF_SECRET, tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6 }],
       chain: {
         getConfig: async () => ({ fee_bps: 275, grace_secs: 3600n, min_duration_secs: 86400n, max_duration_secs: 2592000n }),
@@ -231,6 +227,59 @@ describe('public reads', () => {
     expect(empty.paidCount).toBe(0);
     expect(empty.firstPayoutAt).toBeNull();
     expect((await a.inject('/users/nobody')).statusCode).toBe(404);
+  });
+});
+
+describe('private repositories', () => {
+  it('excludes private-repo bounties from public reads, but keeps them visible to the maintainer', async () => {
+    const a = await app();
+    await db.repo.create({ data: { id: 102n, installationId: 1n, fullName: 'o/Secret', private: true } });
+    await bounty(1n, { token: 'PUBLIC_TOKEN' });
+    await db.bounty.create({ data: {
+      id: 2n, repoId: 102n, issueNumber: 2, issueTitle: 'Secret issue', issueUrl: '',
+      criteria: ['secret criteria'], maintainer: 'GMAINTAINER', token: 'SECRET_TOKEN',
+      amount: '9000', feeBps: 300, deadline: new Date(2030, 0, 2), relayerAllowed: true,
+      status: 'OPEN', fundTx: 't', createdAt: new Date(),
+    } });
+
+    // list and filters do not disclose the private repo or its token
+    const list = (await a.inject('/bounties?status=ALL')).json();
+    expect(list.items.map((x: { id: string }) => x.id)).toEqual(['1']);
+    expect((await a.inject('/bounties?q=secret')).json().items).toHaveLength(0);
+    const filters = (await a.inject('/filters')).json();
+    expect(filters.repositories).toEqual(['o/Repo']);
+    expect(filters.tokens).toEqual(['PUBLIC_TOKEN']);
+
+    // detail is a 404, indistinguishable from a missing bounty
+    expect((await a.inject('/bounties/2')).statusCode).toBe(404);
+    expect((await a.inject('/bounties/1')).statusCode).toBe(200);
+
+    // the public profile omits payouts from private bounties
+    const winner = await login('winner', 99n);
+    await db.payout.create({ data: { bountyId: 1n, prNumber: 1, winnerGithubId: winner.u.githubId, status: 'CONFIRMED', idempotencyKey: 'public', txHash: 'PUB' } });
+    await db.payout.create({ data: { bountyId: 2n, prNumber: 2, winnerGithubId: winner.u.githubId, status: 'CONFIRMED', idempotencyKey: 'private', txHash: 'PRIV' } });
+    const profile = (await a.inject('/users/WINNER')).json();
+    expect(profile.paid).toHaveLength(1);
+    expect(profile.paid[0].txHash).toBe('PUB');
+
+    // the maintainer still sees the private bounty on /me
+    const maintainer = await db.user.create({ data: { githubId: 77n, githubLogin: 'maintainer', wallet: 'GMAINTAINER' } });
+    const session = await createSession(db, maintainer.id);
+    const funded = (await a.inject({ url: '/me/funded', headers: { cookie: `se_session=${session.id}` } })).json();
+    expect(funded.map((x: { id: string }) => x.id)).toEqual(['2']);
+  });
+});
+
+describe('maintainer reads', () => {
+  it('exposes the pending payout recipient so the web app can confirm a release', async () => {
+    const a = await app();
+    await bounty(1n);
+    const maintainer = await db.user.create({ data: { githubId: 78n, githubLogin: 'maint', wallet: 'GM' } });
+    const winner = await db.user.create({ data: { githubId: 79n, githubLogin: 'winner' } });
+    await db.payout.create({ data: { bountyId: 1n, prNumber: 7, winnerGithubId: winner.githubId, winnerAddress: 'GWINNER', status: 'AWAITING_MAINTAINER', idempotencyKey: 'pending-release' } });
+    const session = await createSession(db, maintainer.id);
+    const funded = (await a.inject({ url: '/me/funded', headers: { cookie: `se_session=${session.id}` } })).json();
+    expect(funded[0].payouts[0].winnerAddress).toBe('GWINNER');
   });
 });
 

@@ -85,8 +85,6 @@ test.describe('public pages', () => {
     await expect(page.getByRole('heading', { name: 'Install the GitHub App' })).toBeVisible();
   });
 
- feat/bounty-metadata-ai-accessibility
-
   test('status page renders reachability and indexer lag, linked from footer', async ({ page }) => {
     await page.goto('/');
     const statusLink = page.locator('footer').getByRole('link', { name: 'Status' });
@@ -100,7 +98,6 @@ test.describe('public pages', () => {
     await noSideScroll(page);
   });
 
- fresh-build
   test('filters by token, status, repository, and combinations', async ({ page }) => {
     await page.goto('/');
     await page.getByLabel('Token').selectOption('CUSDCE2E');
@@ -223,11 +220,7 @@ test.describe('admin', () => {
 });
 
 const fakeMe = (over: object = {}) => ({ id: 'u55', login: 'maint', wallet: null, isAdmin: false, csrfToken: 'csrf-scripted', ...over });
- feat/bounty-metadata-ai-accessibility
 const fakeDispute = (status: 'requested' | 'opened_onchain') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
-
-const fakeDispute = (status: 'REQUESTED' | 'OPENED_ONCHAIN') => ({ id: 'disputeaaaaaaaaaa1', status, reason: 'Merged PR was not paid', createdAt: new Date().toISOString(), overdue: true, resolutionNote: null, bounty: { id: '3', issueTitle: 'Fix flaky CI', amount: '250000000', token: 'CUSDCE2E', maintainer: FAKE_ADDRESS, repo: { fullName: 'acme/gadgets' }, prs: [] } });
- fresh-build
 const fakeStatus = { indexerLedger: 1, failedPayouts: 0, waitingPayouts: 0, openDisputes: 1 };
 
 test.describe('scripted Freighter signed flows', () => {
@@ -309,18 +302,47 @@ test.describe('scripted Freighter signed flows', () => {
   });
 
   for (const action of ['release', 'refund'] as const) {
+    const label = action === 'release' ? 'Release' : 'Refund';
     test(`signs and submits a maintainer ${action} with CSRF protection`, async ({ page }) => {
       await installFakeWallet(page); await mockConfig(page);
       await page.route('**/api/auth/me', (r) => r.fulfill({ json: fakeMe({ wallet: FAKE_ADDRESS }) }));
-      await page.route('**/api/me/funded', (r) => r.fulfill({ json: [{ id: '1', issueTitle: 'Bounty one', amount: '500000000', token: 'CUSDCE2E', status: 'OPEN', deadline: new Date().toISOString() }] }));
+      // Refunds are only offered once the upstream grace window has passed.
+      const deadline = action === 'refund' ? new Date(Date.now() - 4 * 864e5).toISOString() : new Date().toISOString();
+      await page.route('**/api/me/funded', (r) => r.fulfill({ json: [{ id: '1', issueTitle: 'Bounty one', amount: '500000000', token: 'CUSDCE2E', status: 'OPEN', deadline }] }));
       let signedXdr: unknown, csrfHeader: string | undefined;
       await page.route(`**/api/bounties/1/${action}/build`, (r) => r.fulfill({ json: { xdr: `unsigned-${action}-xdr` } }));
       await page.route('**/api/tx/submit', (r) => { signedXdr = r.request().postDataJSON().xdr; csrfHeader = r.request().headers()['x-csrf-token']; return r.fulfill({ json: { hash: 'tx' } }); });
-      await page.goto('/me'); await page.getByRole('button', { name: action === 'release' ? 'Release' : 'Refund' }).click();
-      await expect(page.getByRole('status')).toContainText(action === 'release' ? 'Release submitted.' : 'Refund submitted.');
+      await page.goto('/me');
+      await page.getByRole('button', { name: label }).click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toContainText('50.00 USDC');
+      await expect(dialog).toContainText(action === 'release' ? 'to the winning PR author' : 'refund');
+      await expect(dialog).toContainText('irreversible');
+      await dialog.getByRole('button', { name: `Confirm ${label}` }).click();
+      await expect(page.getByRole('status')).toContainText(`${label} submitted.`);
       expect(signedXdr).toBe(`signed:unsigned-${action}-xdr`); expect(csrfHeader).toBe('csrf-scripted');
     });
   }
+
+  test('confirmation dialog traps focus and cancels with Escape without signing', async ({ page }) => {
+    await installFakeWallet(page); await mockConfig(page);
+    await page.route('**/api/auth/me', (r) => r.fulfill({ json: fakeMe({ wallet: FAKE_ADDRESS }) }));
+    await page.route('**/api/me/funded', (r) => r.fulfill({ json: [{ id: '1', issueTitle: 'Bounty one', amount: '500000000', token: 'CUSDCE2E', status: 'OPEN', deadline: new Date().toISOString(), winnerAddress: 'GWINNER' }] }));
+    let built = false;
+    await page.route('**/api/bounties/1/release/build', (r) => { built = true; return r.fulfill({ json: { xdr: 'x' } }); });
+    await page.goto('/me');
+    await page.getByRole('button', { name: 'Release' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('GWINNER');
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByRole('button', { name: 'Confirm Release' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    expect(built).toBe(false);
+  });
 
   test('opens a dispute on chain using the scripted arbiter wallet', async ({ page }) => {
     await installFakeWallet(page); await mockConfig(page);
@@ -366,8 +388,6 @@ test.describe('scripted Freighter signed flows', () => {
     await expect(page.getByRole('status')).toContainText('a winner address is required when winnerBps > 0'); expect(built).toBe(false);
   });
 });
- feat/bounty-metadata-ai-accessibility
-
 
 test.describe('public profile page', () => {
   test('shows paid bounties with tokens and explorer links', async ({ page }) => {
@@ -469,4 +489,3 @@ test.describe('address truncation on small screens', () => {
     await noSideScroll(page);
   });
 });
- fresh-build

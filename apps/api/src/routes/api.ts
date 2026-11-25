@@ -142,6 +142,9 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
   }
 
   // ---- public reads ----
+  // Bounties on private repositories are excluded from every public read (list,
+  // detail, profile and filters). We chose exclusion over redaction so that no
+  // title, repo name or criteria can leak; the maintainer still sees them on /me.
   app.get('/config', async (_req, reply) => {
     try {
       const config = await d.chain?.getConfig?.();
@@ -157,24 +160,10 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
 
   app.get('/filters', async () => {
     const [repos, tokens] = await Promise.all([
-      d.db.repo.findMany({ where: { bounties: { some: {} } }, select: { fullName: true }, orderBy: { fullName: 'asc' } }),
-      d.db.bounty.findMany({ distinct: ['token'], select: { token: true }, orderBy: { token: 'asc' } }),
+      d.db.repo.findMany({ where: { private: false, bounties: { some: {} } }, select: { fullName: true }, orderBy: { fullName: 'asc' } }),
+      d.db.bounty.findMany({ where: { repo: { is: { private: false } } }, distinct: ['token'], select: { token: true }, orderBy: { token: 'asc' } }),
     ]);
     return { statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: tokens.map((x) => x.token), repositories: repos.map((x) => x.fullName) };
- feat/bounty-metadata-ai-accessibility
-  });
-
-  const listQuery = z.object({
-    status: z.enum(['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED', 'RESOLVED', 'ALL']).optional(),
-    token: z.string().optional(),
-    repo: z.string().max(200).optional(),
-    minAmount: z.string().regex(/^\d+$/).optional(),
-    q: z.string().max(100).optional(),
-    sort: z.enum(['newest', 'highest', 'ending']).default('newest'),
-    cursor: z.string().regex(/^\d{1,18}$/).optional(),
-    limit: z.coerce.number().int().min(1).max(50).default(20),
-
- fresh-build
   });
 
   app.get('/bounties', async (req, reply) => {
@@ -183,6 +172,7 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
     const f = p.data;
     const rows = await d.db.bounty.findMany({
       where: {
+        repo: { is: { private: false } },
         ...(f.status && f.status !== 'ALL' ? { status: f.status } : f.status === 'ALL' ? {} : { status: 'OPEN' }),
         ...(f.token ? { token: f.token } : {}),
         ...(f.repo ? { repo: { fullName: f.repo } } : {}),
@@ -201,8 +191,8 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
   app.get('/bounties/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id;
     if (!/^\d{1,18}$/.test(id)) return err(reply, 404, 'not_found', 'bounty not found');
-    const b = await d.db.bounty.findUnique({
-      where: { id: BigInt(id) },
+    const b = await d.db.bounty.findFirst({
+      where: { id: BigInt(id), repo: { is: { private: false } } },
       include: { repo: { select: { fullName: true } }, prs: { include: { pr: { include: { reviews: { orderBy: { createdAt: 'desc' }, take: 1 } } } } }, payouts: true },
     });
     if (!b) return err(reply, 404, 'not_found', 'bounty not found');
@@ -238,14 +228,18 @@ export function registerApi(app: FastifyInstance, d: ApiDeps) {
   app.get('/me/funded', authed(false), async (req) => {
     const u = (req as Authed).user!;
     if (!u.wallet) return [];
-    return ser(await d.db.bounty.findMany({ where: { maintainer: u.wallet }, orderBy: { id: 'desc' } }));
+    return ser(await d.db.bounty.findMany({
+      where: { maintainer: u.wallet },
+      orderBy: { id: 'desc' },
+      include: { payouts: { where: { status: 'AWAITING_MAINTAINER' }, orderBy: { createdAt: 'desc' }, take: 1, select: { winnerAddress: true } } },
+    }));
   });
 
   app.get('/users/:login', async (req, reply) => {
     const u = await d.db.user.findFirst({ where: { githubLogin: { equals: (req.params as { login: string }).login, mode: 'insensitive' } } });
     if (!u) return err(reply, 404, 'not_found', 'user not found');
     const paid = await d.db.payout.findMany({
-      where: { winnerGithubId: u.githubId, status: 'CONFIRMED' },
+      where: { winnerGithubId: u.githubId, status: 'CONFIRMED', bounty: { is: { repo: { is: { private: false } } } } },
       include: { bounty: { select: { id: true, token: true, amount: true, feeBps: true, issueTitle: true, issueUrl: true } } },
       orderBy: { createdAt: 'desc' },
     });
