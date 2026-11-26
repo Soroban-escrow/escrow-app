@@ -1,39 +1,53 @@
-name: Feature / change request
-description: Propose a scoped contract or tooling change.
-title: "feat: "
+name: Feature Request
+description: Suggest a new feature or enhancement
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Check SPEC.md non-goals before proposing work. Prefer a draft PR early once an issue is claimed.
+        Thanks for suggesting a feature.
+
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What is hard or impossible today?
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: As a user, I want to...
     validations:
       required: true
+
   - type: textarea
-    id: proposal
+    id: solution
     attributes:
-      label: Proposal
-      description: Concrete change, affected crates/paths, and acceptance criteria.
+      label: Proposed Solution
+      description: How would you like this to work?
     validations:
       required: true
+
   - type: textarea
-    id: testing
+    id: alternatives
     attributes:
-      label: How to test
-      description: Auth cases, arithmetic edges, and any conservation invariants.
+      label: Alternatives Considered
+      description: What other approaches have you thought about?
     validations:
-      required: true
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, mockups, or examples
+    validations:
+      required: false
+
   - type: checkboxes
-    id: checklist
+    id: scope
     attributes:
-      label: Spec fit
+      label: Scope
+      description: Which areas does this affect?
       options:
-        - label: I read SPEC.md and this is not listed as a non-goal
-          required: true
-        - label: I will not renumber or remove released Error variants
-          required: true
+        - label: API
+        - label: Web UI
+        - label: Smart contracts
+        - label: GitHub integration
+        - label: Documentation

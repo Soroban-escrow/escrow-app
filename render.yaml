@@ -1,0 +1,48 @@
+# Render Blueprint: the always-on worker (indexer, webhook consumer, payouts, alerts).
+# The web app and API run on Vercel. Values marked sync: false are asked for once, when the Blueprint is created.
+# Health probes: a worker serves no HTTP, so there is no healthCheckPath here. If the API is ever deployed as a Render
+# web service, point healthCheckPath at /livez (process only), never /readyz, so an RPC blip cannot restart a healthy API.
+services:
+  - type: worker
+    name: escrow-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: node apps/api/dist/worker.mjs
+    branch: fresh-build
+    envVars:
+      - key: NODE_VERSION
+        value: "26"
+      - key: NODE_ENV
+        value: production
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: STELLAR_NETWORK_PASSPHRASE
+        value: Test SDF Network ; September 2015
+      - key: BOUNTY_CONTRACT_ID
+        value: CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V
+      - key: WEB_PUBLIC_URL
+        value: https://escrow-web-tau.vercel.app
+      - key: API_PUBLIC_URL
+        value: https://escrow-web-tau.vercel.app/api
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CSRF_SECRET
+        generateValue: true
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false

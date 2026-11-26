@@ -1,0 +1,2 @@
+# public testnet token contract id used as a test fixture (not a secret)
+apps/api/test/indexer.test.ts:generic-api-key:21

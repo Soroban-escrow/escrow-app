@@ -1,46 +1,73 @@
-name: Bug report
-description: Something in the contracts or tooling behaves incorrectly.
-title: "bug: "
+name: Bug Report
+description: Report a bug or unexpected behavior
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Contracts move money. Include a reproduction that fails on `main` with `make ci` or `cargo nextest`.
+        Thanks for taking the time to report a bug.
+
   - type: textarea
-    id: summary
+    id: description
     attributes:
-      label: Summary
-      description: What went wrong in one or two sentences.
+      label: Description
+      description: A clear description of what the bug is.
+      placeholder: When I try to...
     validations:
       required: true
+
   - type: textarea
-    id: repro
+    id: reproduce
     attributes:
-      label: Reproduction
-      description: Exact commands, contract, and inputs. Prefer a failing test sketch.
+      label: Steps to Reproduce
+      description: How can we reproduce the issue?
       placeholder: |
-        1. cargo nextest run -E 'test(=…)'
-        2. …
+        1. Go to...
+        2. Click on...
+        3. See error...
     validations:
       required: true
+
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: Expected Behavior
+      description: What did you expect to happen?
     validations:
       required: true
+
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior
+      label: Actual Behavior
+      description: What actually happened?
     validations:
       required: true
-  - type: input
-    id: toolchain
+
+  - type: textarea
+    id: environment
     attributes:
-      label: Toolchain
-      description: Output of `rustc -V` (should match rust-toolchain.toml).
-      placeholder: rustc 1.97.1
+      label: Environment
+      description: Relevant environment details
+      placeholder: |
+        - Browser/Node version:
+        - OS:
+        - Network: mainnet/testnet
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or Screenshots
+      description: Add any relevant logs or screenshots
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem
     validations:
       required: false

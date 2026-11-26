@@ -53,6 +53,13 @@ describe('amounts (deterministic & boundary unit tests)', () => {
     }
   });
 
+  it('parses large and fractional user values without floating point rounding', () => {
+    expect(toBaseUnits('0.1')).toBe(1_000_000n);
+    expect(toBaseUnits('123456789.1234567')).toBe(1_234_567_891_234_567n);
+    expect(() => toBaseUnits('1e3')).toThrow();
+    expect(() => toBaseUnits('.5')).toThrow();
+  });
+
   it('round-trips standard integer values', () => {
     for (const v of [0n, 1n, 9999999n, 10000000n, 123456789012345n]) {
       expect(toBaseUnits(fromBaseUnits(v))).toBe(v);
@@ -255,6 +262,21 @@ describe('mutation testing (floor division vs round-to-nearest)', () => {
   });
 });
 
+describe('fees (same vectors as the contract)', () => {
+  it('matches fees.rs tests', () => {
+    expect(fee(1n, 300)).toBe(0n);
+    expect(net(1n, 300)).toBe(1n);
+    expect(fee(1_000_000n, 1)).toBe(100n);
+    expect(fee(1_000_000n, 1000)).toBe(100_000n);
+    expect(fee(33n, 300)).toBe(0n);
+    expect(fee(34n, 300)).toBe(1n);
+    expect(portion(3n, 3333)).toBe(0n);
+    const i128max = (1n << 127n) - 1n;
+    expect(fee(i128max / 10_000n, 10_000)).toBe(i128max / 10_000n);
+    expect(() => fee(i128max, 10_000)).toThrow();
+  });
+});
+
 describe('status parser (regression check)', () => {
   it('does not accept prototype keys', () => {
     expect(parseStatus('OPEN')).toBe('OPEN');
@@ -306,5 +328,27 @@ describe('parseCommand (regression check)', () => {
     expect(parseCommand('/bounty review')).toEqual({ kind: 'review' });
     expect(parseCommand('/bounty')).toEqual({ kind: 'help' });
     expect(parseCommand('/bounty help')).toEqual({ kind: 'help' });
+  });
+
+  it.each([
+    ['/bounty\t50\tUSDC\t14d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/bounty 50 USDC 14d\r\nignored text', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/BOUNTY 50 USDC 14d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 14 }],
+    ['/bounty 50 USDC 999d', { kind: 'fund', amount: 500000000n, token: 'USDC', days: 999 }],
+    ['/bounty 50usdc', { kind: 'error', message: 'Invalid amount "50usdc".' }],
+    ['/bounty 50 USDC 14 d', { kind: 'error', message: 'Unrecognised "14". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 50 USDC 0d', { kind: 'error', message: 'Duration must be at least 1 day.' }],
+    ['/bounty 50 USDC 14d extra', { kind: 'error', message: 'Unrecognised "extra". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 50 USDC 🚀', { kind: 'error', message: 'Unrecognised "🚀". Usage: /bounty <amount> [USDC|XLM] [<days>d]' }],
+    ['/bounty 1.00000001', { kind: 'error', message: 'Invalid amount "1.00000001".' }],
+    ['/bounty +5', { kind: 'error', message: 'Invalid amount "+5".' }],
+    ['/bounty -5', { kind: 'error', message: 'Invalid amount "-5".' }],
+  ])('handles edge case %#', (input, expected) => {
+    expect(parseCommand(input)).toEqual(expected);
+  });
+
+  it('accepts very long dispute reasons without truncation', () => {
+    const reason = 'x'.repeat(10_000);
+    expect(parseCommand(`/bounty dispute ${reason}`)).toEqual({ kind: 'dispute', reason });
   });
 });
