@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { PullRequestState } from '@prisma/client';
+import { formatCommandHelp, formatCommandTable } from '@skillescrow/shared';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
 import { handleIssueComment, type CommandDeps, type IssueCommentPayload } from '../src/github/commands.js';
@@ -78,10 +81,26 @@ describe('/bounty fund', () => {
   });
 });
 
+describe('command help from shared metadata (#135)', () => {
+  it('replies to /bounty help with the shared help text, which lists /bounty review', async () => {
+    expect(await handleIssueComment(deps(), payload('/bounty help'))).toBe('help');
+    expect(comments.at(-1)).toBe(formatCommandHelp());
+    expect(comments.at(-1)).toContain('`/bounty review`');
+  });
+  it('appends the same help to error replies', async () => {
+    expect(await handleIssueComment(deps(), payload('/bounty abc'))).toBe('error');
+    expect(comments.at(-1)?.endsWith(formatCommandHelp())).toBe(true);
+  });
+  it('keeps the README command table identical to the shared metadata', () => {
+    const readme = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8');
+    expect(readme, 'README "Bot commands" table is out of date; paste formatCommandTable() output').toContain(formatCommandTable());
+  });
+});
+
 describe('/bounty dispute', () => {
   beforeEach(async () => {
     await db.bounty.create({ data: { id: 1n, repoId: 100n, issueNumber: 7, issueTitle: '', issueUrl: '', criteria: [], maintainer: 'G', maintainerGithubId: 55n, token: 'CUSDC', amount: '1', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
-    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: 'open' } });
+    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: PullRequestState.OPEN } });
     await db.pullRequestBounty.create({ data: { prId: 5n, bountyId: 1n } });
   });
   it('lets the maintainer and a PR author open one, but not strangers', async () => {
@@ -106,7 +125,7 @@ describe('/bounty review (on a PR)', () => {
   beforeEach(async () => {
     requested = [];
     await db.bounty.create({ data: { id: 1n, repoId: 100n, issueNumber: 7, issueTitle: '', issueUrl: '', criteria: [], maintainer: 'G', maintainerGithubId: 55n, token: 'CUSDC', amount: '1', feeBps: 300, deadline: new Date(), relayerAllowed: true, status: 'OPEN', fundTx: 't', createdAt: new Date() } });
-    await db.pullRequest.create({ data: { id: 5n, number: 12, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: 'open' } });
+    await db.pullRequest.create({ data: { id: 5n, number: 12, authorGithubId: 77n, authorLogin: 'contrib', headSha: 'abc', state: PullRequestState.OPEN } });
     await db.pullRequestBounty.create({ data: { prId: 5n, bountyId: 1n } });
   });
   const onPr = (n: number) => payload('/bounty review', { issue: { number: n, state: 'open', pull_request: {} } });

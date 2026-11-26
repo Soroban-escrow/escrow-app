@@ -5,7 +5,9 @@ dist/
 !.env.example
 .next/
 .DS_Store
+coverage/
 .next/
 next-env.d.ts
 *.tsbuildinfo
 .vercel
+*.tmp.*

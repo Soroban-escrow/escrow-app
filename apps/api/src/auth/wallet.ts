@@ -48,7 +48,10 @@ export async function verifyChallenge(d: WalletDeps, userId: string, challengeId
       // atomic burn: of several simultaneous verifies exactly one wins
       const burned = await tx.walletChallenge.updateMany({ where: { id: c.id, usedAt: null }, data: { usedAt: clock(d) } });
       if (burned.count !== 1) throw new WalletError('challenge_used', 'challenge already used', 409);
+      const before = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { githubId: true, wallet: true } });
       await tx.user.update({ where: { id: userId }, data: { wallet: c.address, walletLinkedAt: clock(d) } });
+      // audited in the same transaction so the log can never disagree with the wallet
+      await tx.auditLog.create({ data: { actor: `user:${before.githubId}`, action: 'wallet.linked', target: `user:${userId}`, data: { old: before.wallet, new: c.address } } });
     });
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') throw new WalletError('address_taken', 'address already linked to another account', 409);
@@ -58,5 +61,10 @@ export async function verifyChallenge(d: WalletDeps, userId: string, challengeId
 }
 
 export async function unlinkWallet(d: WalletDeps, userId: string) {
-  await d.db.user.update({ where: { id: userId }, data: { wallet: null, walletLinkedAt: null } });
+  await d.db.$transaction(async (tx) => {
+    const before = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { githubId: true, wallet: true } });
+    await tx.user.update({ where: { id: userId }, data: { wallet: null, walletLinkedAt: null } });
+    // nothing changed if no wallet was linked, so there is nothing to audit
+    if (before.wallet) await tx.auditLog.create({ data: { actor: `user:${before.githubId}`, action: 'wallet.unlinked', target: `user:${userId}`, data: { old: before.wallet, new: null } } });
+  });
 }

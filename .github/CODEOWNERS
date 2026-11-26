@@ -1,0 +1,11 @@
+# Code owners are automatically requested for review when someone opens a pull request
+# that modifies code they own.
+
+# Payout processing - critical for financial operations
+/apps/api/src/payouts/ @Soroban-escrow/core-team
+
+# Blockchain integration - chain is source of truth
+/apps/api/src/chain/ @Soroban-escrow/core-team
+
+# Authentication and authorization - security critical
+/apps/api/src/auth/ @Soroban-escrow/core-team

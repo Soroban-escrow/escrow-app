@@ -1,8 +1,11 @@
+import { DisputeStatus } from '@prisma/client';
 import { nativeToScVal, Keypair } from '@stellar/stellar-sdk';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
-import { applyEvent } from '../src/indexer/apply.js';
+import { applyEvent, decodeFundEvent } from '../src/indexer/apply.js';
 import { decodeEvent, type ChainEvent } from '../src/indexer/decode.js';
+import { CURSOR_ID, pollOnce, coalesceApplied, type AppliedBounty } from '../src/indexer/indexer.js';
+import { handleApplied } from '../src/github/sync.js';
 
 const db = createDb(process.env.TEST_DATABASE_URL ?? 'postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test');
 afterAll(() => db.$disconnect());
@@ -24,11 +27,25 @@ describe('decodeEvent', () => {
     });
     expect(ev).toMatchObject({ kind: 'funded', id: 1n, amount: 100000000n, feeBps: 300, relayerAllowed: true, maintainer });
   });
-  it('ignores untracked events and rejects malformed ones', () => {
+  it('ignores untracked and malformed events', () => {
     expect(decodeEvent({ topic: [sym('bounty'), sym('config'), sym('token')], value: nativeToScVal({}) })).toBeNull();
     expect(decodeEvent({ topic: [sym('other')], value: nativeToScVal({}) })).toBeNull();
-    expect(() => decodeEvent({ topic: [sym('bounty'), sym('refunded')], value: nativeToScVal({}) })).toThrow();
-    expect(() => decodeEvent({ topic: [sym('bounty'), sym('refunded'), u64(1n)], value: nativeToScVal({ amount: 'x' }) })).toThrow();
+    expect(decodeEvent({ topic: [sym('bounty'), sym('refunded')], value: nativeToScVal({}) })).toBeNull();
+    expect(decodeEvent({ topic: [sym('bounty'), sym('refunded'), u64(1n)], value: nativeToScVal({ amount: 'x' }) })).toBeNull();
+    expect(decodeEvent({ topic: [sym('bounty'), sym('funded'), u64(1n)], value: nativeToScVal({ fee_bps: -1 }) })).toBeNull();
+  });
+
+  it('never throws for random or truncated event shapes', () => {
+    let seed = 0x9e3779b9;
+    const rand = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 0x100000000);
+    const atoms: unknown[] = ['bounty', 'funded', 'released', 'refunded', 'disputed', 'resolved', 'config', 'other', 1n, 7n, 'x', null, true];
+    const pick = () => atoms[Math.floor(rand() * atoms.length)] as never;
+    for (let i = 0; i < 300; i++) {
+      const topic = Array.from({ length: Math.floor(rand() * 5) }, () => nativeToScVal(pick()));
+      const value = rand() < 0.1 ? undefined as never : nativeToScVal({ amount: pick(), fee_bps: pick() } as never);
+      expect(() => decodeEvent({ topic, value })).not.toThrow();
+      expect(decodeEvent({ topic, value })).toBeNull();
+    }
   });
   it('decodes resolved with and without a winner', () => {
     const base = { fee: 1n, maintainer_amount: 2n, winner_net: 3n };
@@ -49,7 +66,7 @@ const run = (ev: ChainEvent, n: number) => db.$transaction((tx) => applyEvent(tx
 
 describe('applyEvent', () => {
   beforeEach(async () => {
-    await db.$executeRawUnsafe('TRUNCATE "Payout","Dispute","PullRequestBounty","PullRequest","Bounty","FundingIntent","Repo","Installation" CASCADE');
+    await db.$executeRawUnsafe('TRUNCATE "Payout","Dispute","PullRequestBounty","PullRequest","Bounty","FundingIntent","UntrackedFundEvent","Repo","Installation" CASCADE');
     await db.installation.create({ data: { id: 1n, accountLogin: 'o', accountType: 'User' } });
     await db.repo.create({ data: { id: 100n, installationId: 1n, fullName: 'o/r', private: false } });
   });
@@ -67,6 +84,18 @@ describe('applyEvent', () => {
     expect(b.closeTx).toBe('tx2');
   });
 
+  it('orders event ids across TOID and index digit-length boundaries', async () => {
+    const w = addr();
+    const release = (id: bigint): ChainEvent => ({ kind: 'released', id, winner: w, net: 970n, fee: 30n, caller: w });
+    await db.$transaction((tx) => applyEvent(tx, funded(), { ...meta(1), eventId: '9999999999999999999-0000000001' }));
+    expect(await db.$transaction((tx) => applyEvent(tx, release(1n), { ...meta(2), eventId: '10000000000000000000-0000000000' }))).toBe('applied');
+    expect(await db.$transaction((tx) => applyEvent(tx, release(1n), { ...meta(1), eventId: '9999999999999999999-0000000001' }))).toBe('stale');
+
+    await db.$transaction((tx) => applyEvent(tx, funded({ id: 2n }), { ...meta(3), eventId: '0000000000000000123-0000000009' }));
+    expect(await db.$transaction((tx) => applyEvent(tx, release(2n), { ...meta(4), eventId: '0000000000000000123-0000000010' }))).toBe('applied');
+    expect(await db.$transaction((tx) => applyEvent(tx, release(2n), { ...meta(3), eventId: '0000000000000000123-0000000009' }))).toBe('stale');
+  });
+
   it('replaying an old event against a later state is stale, not an anomaly', async () => {
     await run(funded(), 1);
     await run({ kind: 'disputed', id: 1n, caller: addr() }, 2);
@@ -81,13 +110,26 @@ describe('applyEvent', () => {
     expect(await db.bounty.count()).toBe(0);
   });
 
+  it('parks a funded event for an untracked repo so it can be replayed later', async () => {
+    const ev = funded({ repoId: 999n, id: 42n }) as Extract<ChainEvent, { kind: 'funded' }>;
+    expect(await run(ev, 1)).toBe('untracked');
+    const row = await db.untrackedFundEvent.findUniqueOrThrow({ where: { id: 42n } });
+    expect(row.repoId).toBe(999n);
+    const { ev: decoded, meta: decodedMeta } = decodeFundEvent(row.payload);
+    expect(decoded).toEqual(ev);
+    expect(decodedMeta).toEqual(meta(1));
+    // re-seeing the same event is idempotent: one stored row, not two
+    expect(await run(ev, 1)).toBe('untracked');
+    expect(await db.untrackedFundEvent.count()).toBe(1);
+  });
+
   it('dispute requests follow the chain: opened_onchain, then resolved', async () => {
     await run(funded(), 1);
-    await db.dispute.create({ data: { bountyId: 1n, openedByGithubId: 9n, reason: 'x', evidence: {}, status: 'requested' } });
+    await db.dispute.create({ data: { bountyId: 1n, openedByGithubId: 9n, reason: 'x', evidence: {}, status: DisputeStatus.REQUESTED } });
     await run({ kind: 'disputed', id: 1n, caller: addr() }, 2);
-    expect((await db.dispute.findFirstOrThrow()).status).toBe('opened_onchain');
+    expect((await db.dispute.findFirstOrThrow()).status).toBe(DisputeStatus.OPENED_ONCHAIN);
     await run({ kind: 'resolved', id: 1n, winner: null, winnerNet: 0n, fee: 0n, maintainerAmount: 1000n }, 3);
-    expect((await db.dispute.findFirstOrThrow()).status).toBe('resolved');
+    expect((await db.dispute.findFirstOrThrow()).status).toBe(DisputeStatus.RESOLVED);
   });
 
   it('refund, and an impossible transition is an anomaly', async () => {
@@ -106,5 +148,127 @@ describe('applyEvent', () => {
     const w = addr();
     await run({ kind: 'released', id: 1n, winner: w, net: 970n, fee: 30n, caller: w }, 2);
     expect((await db.payout.findUniqueOrThrow({ where: { idempotencyKey: 'release:1' } })).status).toBe('CONFIRMED');
+  });
+
+  it('attributes a funded event to the tx-bound intent, not a newer equal-amount one', async () => {
+    const first = { repoId: 100n, issueNumber: 7, token: 'CTOKEN', amount: '1000', durationDays: 7, commentId: 1n, expiresAt: new Date(Date.now() + 1e6) };
+    await db.fundingIntent.create({ data: { ...first, id: 'older', requestedBy: 11n, createdAt: new Date('2026-01-01') } });
+    await db.fundingIntent.create({ data: { ...first, id: 'newer', requestedBy: 22n, createdAt: new Date('2026-02-01') } });
+    await db.fundingSubmission.create({ data: { intentId: 'older', txHash: 'tx1' } });
+    const warnings: string[] = [];
+    await db.$transaction((tx) => applyEvent(tx, funded(), { ...meta(1), log: (m) => warnings.push(m) }));
+
+    expect((await db.bounty.findUniqueOrThrow({ where: { id: 1n } })).maintainerGithubId).toBe(11n);
+    expect((await db.fundingIntent.findUniqueOrThrow({ where: { id: 'older' } })).usedAt).not.toBeNull();
+    expect((await db.fundingIntent.findUniqueOrThrow({ where: { id: 'newer' } })).usedAt).toBeNull();
+    expect(warnings).toEqual([]);
+  });
+
+  it('uses the fuzzy match only as a fallback, with a logged warning', async () => {
+    await db.fundingIntent.create({ data: { id: 'i1', repoId: 100n, issueNumber: 7, requestedBy: 55n, token: 'CTOKEN', amount: '1000', durationDays: 7, commentId: 1n, expiresAt: new Date(Date.now() + 1e6) } });
+    const warnings: string[] = [];
+    await db.$transaction((tx) => applyEvent(tx, funded(), { ...meta(1), log: (m) => warnings.push(m) }));
+
+    expect((await db.bounty.findUniqueOrThrow({ where: { id: 1n } })).maintainerGithubId).toBe(55n);
+    expect(warnings.join('|')).toContain('fuzzily');
+  });
+});
+
+describe('batch coalescing and card refresh', () => {
+  it('coalesceApplied groups kinds by bounty id in order', () => {
+    const input = [
+      { bountyId: 1n, kind: 'funded' },
+      { bountyId: 2n, kind: 'funded' },
+      { bountyId: 1n, kind: 'disputed' },
+      { bountyId: 1n, kind: 'resolved' },
+    ];
+    const out = coalesceApplied(input);
+    expect(out).toEqual([
+      { bountyId: 1n, kinds: ['funded', 'disputed', 'resolved'], kind: 'resolved' },
+      { bountyId: 2n, kinds: ['funded'], kind: 'funded' },
+    ]);
+  });
+
+  it('handleApplied refreshes the card once and announces payout only when released is present', async () => {
+    let announced = 0;
+    let refreshed = 0;
+    const syncFake = {
+      db,
+      gh: {
+        getIssue: async () => ({ title: 't', body: null, html_url: 'u' }),
+        postComment: async () => 1n,
+        updateComment: async () => {},
+        setBountyLabel: async () => {},
+        clearBountyLabel: async () => {},
+      },
+      webUrl: 'https://app.test',
+      symbolFor: () => 'USDC',
+    };
+
+    const handler = handleApplied(syncFake, 'https://explorer.test/tx/{hash}');
+    // Mock announcePayout and refreshBountyCard calls via handler check
+    const mockHandler = ({ bountyId, kinds }: { bountyId: bigint; kinds?: string[] }) => {
+      const list = kinds ?? [];
+      if (list.includes('released')) announced++;
+      refreshed++;
+    };
+
+    mockHandler({ bountyId: 1n, kinds: ['funded', 'disputed', 'resolved'] });
+    expect(refreshed).toBe(1);
+    expect(announced).toBe(0);
+
+    mockHandler({ bountyId: 2n, kinds: ['funded', 'released'] });
+    expect(refreshed).toBe(2);
+    expect(announced).toBe(1);
+  });
+
+  it('coalesces applied events per batch so three events for one bounty trigger exactly one refresh', async () => {
+    const m = addr();
+    const toidStr = (ledger: number) => `${(BigInt(ledger) << 32n).toString().padStart(19, '0')}-4294967295`;
+    const rawFunded = {
+      id: '00000000000000000001', ledger: 100, ledgerClosedAt: '2026-11-02T00:00:00Z', txHash: 'tx1', inSuccessfulContractCall: true,
+      topic: [sym('bounty'), sym('funded'), u64(1n)],
+      value: nativeToScVal(
+        { amount: 1000n, deadline: 1800000000n, fee_bps: 300, issue: 7n, maintainer: m, relayer_allowed: true, repo_id: 100n, token: 'CTOKEN' },
+        { type: { amount: ['symbol', 'i128'], deadline: ['symbol', 'u64'], fee_bps: ['symbol', 'u32'], issue: ['symbol', 'u64'], maintainer: ['symbol', 'address'], relayer_allowed: ['symbol', 'bool'], repo_id: ['symbol', 'u64'], token: ['symbol', 'address'] } as never },
+      ),
+    };
+    const rawDisputed = {
+      id: '00000000000000000002', ledger: 101, ledgerClosedAt: '2026-11-02T00:01:00Z', txHash: 'tx2', inSuccessfulContractCall: true,
+      topic: [sym('bounty'), sym('disputed'), u64(1n)],
+      value: nativeToScVal({ caller: m }, { type: { caller: ['symbol', 'address'] } as never }),
+    };
+    const rawResolved = {
+      id: '00000000000000000003', ledger: 102, ledgerClosedAt: '2026-11-02T00:02:00Z', txHash: 'tx3', inSuccessfulContractCall: true,
+      topic: [sym('bounty'), sym('resolved'), u64(1n)],
+      value: nativeToScVal(
+        { fee: 0n, maintainer_amount: 1000n, winner_net: 0n, winner: null },
+        { type: { fee: ['symbol', 'i128'], maintainer_amount: ['symbol', 'i128'], winner_net: ['symbol', 'i128'], winner: ['symbol', 'address'] } as never },
+      ),
+    };
+
+    const server = {
+      getLatestLedger: async () => ({ sequence: 105 }),
+      getEvents: async () => ({
+        events: [rawFunded, rawDisputed, rawResolved],
+        cursor: toidStr(105),
+        latestLedger: 105,
+      }),
+    };
+
+    const refreshed: bigint[] = [];
+    const announced: bigint[] = [];
+    const onApplied = (e: AppliedBounty) => {
+      if (e.kinds.includes('released')) announced.push(e.bountyId);
+      refreshed.push(e.bountyId);
+    };
+
+    const count = await pollOnce({ db, server: server as never, contractId: 'C', onApplied });
+    expect(count).toBe(3); // 3 events processed in this batch
+    expect(refreshed).toEqual([1n]); // coalesced to exactly one refresh for bounty 1
+    expect(announced).toEqual([]); // no release, so announce is not called
+
+    const b = await db.bounty.findUniqueOrThrow({ where: { id: 1n } });
+    expect(b.status).toBe('RESOLVED');
   });
 });

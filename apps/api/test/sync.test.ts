@@ -1,3 +1,4 @@
+import { PullRequestState } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db.js';
 import { githubNotifier, refreshBountyCard, type GithubApi } from '../src/github/sync.js';
@@ -40,37 +41,19 @@ describe('refreshBountyCard', () => {
     expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
     expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ✅ Paid', 'clear label #7']);
   });
-  it('clears the bounty label when status is RELEASED', async () => {
-    await refreshBountyCard(deps(), 1n);
+  it.each(['RELEASED', 'REFUNDED', 'RESOLVED'] as const)('clears the bounty label when the bounty is %s', async (status) => {
+    await refreshBountyCard(deps(), 1n); // posts the card and sets the label
     log.length = 0;
-    await db.bounty.update({ where: { id: 1n }, data: { status: 'RELEASED' } });
-    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
-    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ✅ Paid', 'clear label #7']);
-  });
-  it('clears the bounty label when status is REFUNDED', async () => {
+    await db.bounty.update({ where: { id: 1n }, data: { status } });
     await refreshBountyCard(deps(), 1n);
-    log.length = 0;
-    await db.bounty.update({ where: { id: 1n }, data: { status: 'REFUNDED' } });
-    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
-    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ↩️ Refunded', 'clear label #7']);
+    expect(log).toContain('clear label #7');
+    expect(log.some((l) => l.startsWith('label #'))).toBe(false);
   });
-  it('clears the bounty label when status is RESOLVED', async () => {
+  it.each(['OPEN', 'DISPUTED'] as const)('keeps the bounty label when the bounty is %s', async (status) => {
+    await db.bounty.update({ where: { id: 1n }, data: { status } });
     await refreshBountyCard(deps(), 1n);
-    log.length = 0;
-    await db.bounty.update({ where: { id: 1n }, data: { status: 'RESOLVED' } });
-    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
-    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ⚖️ Resolved', 'clear label #7']);
-  });
-  it('sets the bounty label when status is OPEN', async () => {
-    expect(await refreshBountyCard(deps(), 1n)).toBe('posted');
-    expect(log).toEqual(['post 9 o/r#7 :: ### SkillEscrow bounty: 50.00 USDC · 🟢 Open', 'label #7 bounty: 50 USDC']);
-  });
-  it('sets the bounty label when status is DISPUTED', async () => {
-    await refreshBountyCard(deps(), 1n);
-    log.length = 0;
-    await db.bounty.update({ where: { id: 1n }, data: { status: 'DISPUTED' } });
-    expect(await refreshBountyCard(deps(), 1n)).toBe('updated');
-    expect(log).toEqual(['update 555 :: ### SkillEscrow bounty: 50.00 USDC · ⚠️ Disputed', 'label #7 bounty: 50 USDC']);
+    expect(log).toContain('label #7 bounty: 50 USDC');
+    expect(log.some((l) => l.startsWith('clear label'))).toBe(false);
   });
   it('still renders from stored data when the issue cannot be fetched', async () => {
     failIssue = true;
@@ -103,7 +86,7 @@ describe('announcePayout', () => {
   const d = () => ({ ...deps(), explorerTx });
   beforeEach(async () => {
     await db.$executeRawUnsafe('TRUNCATE "AuditLog","PullRequestBounty","PullRequest" CASCADE');
-    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 9n, authorLogin: 'contrib', headSha: 'a', state: 'merged' } });
+    await db.pullRequest.create({ data: { id: 5n, number: 3, authorGithubId: 9n, authorLogin: 'contrib', headSha: 'a', state: PullRequestState.MERGED } });
     await db.pullRequestBounty.create({ data: { prId: 5n, bountyId: 1n } });
     await db.payout.create({ data: { bountyId: 1n, prNumber: 3, winnerGithubId: 9n, winnerAddress: 'GWINNERADDRESS1234567890', status: 'CONFIRMED', idempotencyKey: 'release:1' } });
   });

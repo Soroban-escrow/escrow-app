@@ -11,3 +11,17 @@ export function contractErrorName(message: string): string | undefined {
   const m = /Error\(Contract, #(\d+)\)/.exec(message);
   return m ? CONTRACT_ERRORS[Number(m[1])] : undefined;
 }
+
+export class SubmitTxError extends Error {
+  readonly code: 'TRY_AGAIN_LATER';
+  readonly hash: string;
+  readonly attempts: number;
+
+  constructor(code: 'TRY_AGAIN_LATER', hash: string, attempts: number) {
+    super(`submit failed: ${code} after ${attempts} attempts`);
+    this.name = 'SubmitTxError';
+    this.code = code;
+    this.hash = hash;
+    this.attempts = attempts;
+  }
+}
