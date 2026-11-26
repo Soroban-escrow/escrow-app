@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
+import { checkWalletBalances, type WalletReadiness } from '@skillescrow/shared/src/readiness';
 import { errorText } from '@/lib/errors';
 import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
 import { explorerTx, formatAddress, money, refundWindow, type TokenInfo } from '@/lib/api';
@@ -20,6 +21,7 @@ export default function Account() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
+  const [readiness, setReadiness] = useState<WalletReadiness | null>(null);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [earnings, setEarnings] = useState<Earning[]>([]);
   const [submitted, setSubmitted] = useState<string | null>(null);
@@ -31,6 +33,23 @@ export default function Account() {
     fetch('/api/me/earnings').then((r) => (r.ok ? r.json() : [])).then(setEarnings, () => setEarnings([]));
     fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
   }, []);
+
+  useEffect(() => {
+    if (!me?.wallet) {
+      setReadiness(null);
+      return;
+    }
+    const horizonUrl = PASSPHRASE.includes('Test') ? 'https://horizon-testnet.stellar.org' : 'https://horizon.stellar.org';
+    fetch(`${horizonUrl}/accounts/${me.wallet}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((acc) => {
+        const res = checkWalletBalances(acc?.balances, 'USDC');
+        setReadiness(res);
+      })
+      .catch(() => {
+        setReadiness(checkWalletBalances(undefined, 'USDC'));
+      });
+  }, [me?.wallet]);
 
   const closeConfirm = useCallback(() => setConfirm(null), []);
 
@@ -97,7 +116,32 @@ export default function Account() {
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
       <h1>{me.login}</h1>
       <h2>Wallet</h2>
-      {me.wallet ? <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code><CopyButton value={me.wallet} label="wallet address" /></p> : <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>}
+      {me.wallet ? (
+        <>
+          <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code><CopyButton value={me.wallet} label="wallet address" /></p>
+          {readiness && (
+            <div className={`panel ${readiness.ready ? 'ok-panel' : 'warn-panel'}`} style={{ marginBottom: '1rem' }}>
+              <p style={{ margin: 0 }}>
+                <strong>Payout Readiness: </strong>
+                {readiness.ready ? (
+                  <span className="badge">Ready for USDC payouts</span>
+                ) : (
+                  <span className="badge" style={{ color: 'var(--red, #e53e3e)' }}>Setup needed</span>
+                )}
+              </p>
+              {readiness.warnings.length > 0 && (
+                <ul style={{ margin: '0.5rem 0 0 1rem', padding: 0 }}>
+                  {readiness.warnings.map((w, idx) => (
+                    <li key={idx} className="muted small">{w}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="muted">No wallet linked. Link one to be paid when your PR is merged.</p>
+      )}
       <button onClick={link} disabled={busy}>{busy ? 'Waiting for Freighter…' : me.wallet ? 'Change wallet' : 'Link wallet'}</button>
       {msg && <p role="status" className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
       <h2>Funded bounties</h2>

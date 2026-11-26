@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AUDIENCE_LABEL, COMMANDS, WHERE_LABEL, fee, formatCommandHelp, formatCommandTable, fromBaseUnits, net,
+  AUDIENCE_LABEL, COMMANDS, WHERE_LABEL, checkWalletBalances, fee, formatCommandHelp, formatCommandTable, fromBaseUnits, net,
   parseCommand, parseStatus, portion, toBaseUnits,
 } from './index.js';
 
@@ -142,5 +142,35 @@ describe('command metadata (#135)', () => {
   it('escapes pipes in table cells so Markdown columns stay aligned', () => {
     const table = formatCommandTable([{ ...COMMANDS[0]!, syntax: '/bounty a|b', example: '/bounty a|b' }]);
     expect(table).toContain('`/bounty a\\|b`');
+  });
+});
+
+describe('checkWalletBalances (readiness)', () => {
+  it('flags unfunded account', () => {
+    const res = checkWalletBalances(undefined);
+    expect(res.funded).toBe(false);
+    expect(res.ready).toBe(false);
+    expect(res.warnings[0]).toContain('not funded');
+  });
+
+  it('detects funded account with XLM but missing USDC trustline', () => {
+    const res = checkWalletBalances([{ assetType: 'native', balance: '10.5' }]);
+    expect(res.funded).toBe(true);
+    expect(res.hasXlm).toBe(true);
+    expect(res.hasUsdcTrustline).toBe(false);
+    expect(res.ready).toBe(false);
+    expect(res.warnings[0]).toContain('USDC trustline');
+  });
+
+  it('approves wallet when funded and has USDC trustline', () => {
+    const res = checkWalletBalances([
+      { assetType: 'native', balance: '25.0' },
+      { assetType: 'credit_alphanum4', code: 'USDC', balance: '0.00' }
+    ]);
+    expect(res.funded).toBe(true);
+    expect(res.hasXlm).toBe(true);
+    expect(res.hasUsdcTrustline).toBe(true);
+    expect(res.ready).toBe(true);
+    expect(res.warnings).toHaveLength(0);
   });
 });
