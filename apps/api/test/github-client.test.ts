@@ -105,6 +105,27 @@ describe('calls', () => {
     expect(g.calls.some((x) => x.method === 'DELETE' && x.path.endsWith('bounty%3A%2010%20USDC'))).toBe(true);
     expect(g.calls.at(-1)!.body).toEqual({ labels: ['bounty: 50 USDC'] });
   });
+  it('clears bounty labels: deletes matching labels and leaves other labels intact', async () => {
+    const g = fakeGithub();
+    g.routes['GET /repos/o/r/issues/7/labels'] = () => ({ status: 200, json: [{ name: 'bounty: 50 USDC' }, { name: 'bug' }] });
+    g.routes['DELETE /repos/o/r/issues/7/labels/bounty%3A%2050%20USDC'] = () => ({ status: 200, json: [] });
+    await make(g).clearBountyLabel(9n, 'o/r', 7);
+    expect(g.calls.some((x) => x.method === 'DELETE' && x.path.endsWith('bounty%3A%2050%20USDC'))).toBe(true);
+    expect(g.calls.some((x) => x.method === 'DELETE' && x.path.endsWith('bug'))).toBe(false);
+  });
+  it('clears multiple bounty labels if present and does nothing when none exist', async () => {
+    const g = fakeGithub();
+    g.routes['GET /repos/o/r/issues/7/labels'] = () => ({ status: 200, json: [{ name: 'bounty: 10 USDC' }, { name: 'bounty: 20 USDC' }] });
+    g.routes['DELETE /repos/o/r/issues/7/labels/bounty%3A%2010%20USDC'] = () => ({ status: 200, json: [] });
+    g.routes['DELETE /repos/o/r/issues/7/labels/bounty%3A%2020%20USDC'] = () => ({ status: 200, json: [] });
+    await make(g).clearBountyLabel(9n, 'o/r', 7);
+    expect(g.calls.filter((x) => x.method === 'DELETE')).toHaveLength(2);
+
+    const g2 = fakeGithub();
+    g2.routes['GET /repos/o/r/issues/7/labels'] = () => ({ status: 200, json: [{ name: 'bug' }] });
+    await make(g2).clearBountyLabel(9n, 'o/r', 7);
+    expect(g2.calls.filter((x) => x.method === 'DELETE')).toHaveLength(0);
+  });
   it('makes no changes when the issue already has exactly the target bounty label', async () => {
     const g = fakeGithub();
     g.routes['GET /repos/o/r/readme'] = () => ({ status: 404 });
@@ -202,6 +223,8 @@ describe('input validation (no request is made)', () => {
     await expect(c.postComment(9n, 'o/r?x=1', 1, 'x')).rejects.toThrow(/repository/);
     await expect(c.getCiConclusion(9n, 'o/r', 'abc/../x')).rejects.toThrow(/sha/);
     await expect(c.setBountyLabel(9n, 'o/r', 1, 'evil; label')).rejects.toThrow(/label/);
+    await expect(c.clearBountyLabel(9n, 'o/r/../../x', 1)).rejects.toThrow(/repository/);
+    await expect(c.clearBountyLabel(9n, 'o/r', -1)).rejects.toThrow(/issue/);
     expect(g.calls).toHaveLength(0);
   });
 });
