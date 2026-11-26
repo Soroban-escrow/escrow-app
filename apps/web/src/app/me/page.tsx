@@ -1,11 +1,18 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { fromBaseUnits } from '@skillescrow/shared/src/amounts';
+import { useCallback, useEffect, useState } from 'react';
 import { checkWalletBalances, type WalletReadiness } from '@skillescrow/shared/src/readiness';
 import { errorText } from '@/lib/errors';
-import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/freighter';
+import { connect, signLinkMessage, signTx, WalletUxError } from '@/lib/wallet';
+import { explorerTx, formatAddress, money, refundWindow, type TokenInfo } from '@/lib/api';
+import { CopyButton } from '@/components/CopyButton';
+import { ConfirmDialog } from './confirm-dialog';
 
-interface Funded { id: string; issueTitle: string; amount: string; status: string; deadline: string }
+interface Funded {
+  id: string; issueTitle: string; amount: string; token: string; status: string;
+  deadline: string; winnerAddress?: string | null;
+  payouts?: { winnerAddress: string | null }[];
+}
+interface Earning { id: string; status: string; prNumber: number; txHash: string | null; bounty: { issueTitle: string; amount: string; token: string; feeBps: number } }
 interface Me { login: string; wallet: string | null; csrfToken: string }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
 
@@ -15,10 +22,16 @@ export default function Account() {
   const [busy, setBusy] = useState(false);
   const [funded, setFunded] = useState<Funded[]>([]);
   const [readiness, setReadiness] = useState<WalletReadiness | null>(null);
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
+  const [earnings, setEarnings] = useState<Earning[]>([]);
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ id: string; kind: 'release' | 'refund' } | null>(null);
 
   useEffect(() => {
     fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then(setMe, () => setMe(null));
     fetch('/api/me/funded').then((r) => (r.ok ? r.json() : [])).then(setFunded, () => setFunded([]));
+    fetch('/api/me/earnings').then((r) => (r.ok ? r.json() : [])).then(setEarnings, () => setEarnings([]));
+    fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((c) => setTokens(c?.tokens ?? []), () => setTokens([]));
   }, []);
 
   useEffect(() => {
@@ -38,7 +51,9 @@ export default function Account() {
       });
   }, [me?.wallet]);
 
-  /** Maintainer actions: the API builds the transaction, Freighter signs it, the API relays it. */
+  const closeConfirm = useCallback(() => setConfirm(null), []);
+
+  /** Maintainer actions: the API builds the transaction, the wallet signs it, the API relays it. */
   async function act(id: string, kind: 'release' | 'refund') {
     if (!me?.wallet) return;
     setBusy(true); setMsg(null);
@@ -51,11 +66,20 @@ export default function Account() {
       if (!b.ok) throw new WalletUxError(errorText(bj.error?.code, bj.error?.message ?? 'Could not prepare the transaction.'));
       const signed = await signTx(bj.xdr, address, PASSPHRASE);
       const s = await fetch('/api/tx/submit', { method: 'POST', headers: h, body: JSON.stringify({ xdr: signed, address }) });
+      const sj = await s.json();
       if (!s.ok) throw new WalletUxError('The network rejected the transaction.');
-      setMsg({ ok: true, text: `${kind === 'release' ? 'Release' : 'Refund'} submitted. The status updates once it confirms.` });
+      setSubmitted(sj.hash ?? null);
+      setMsg({ ok: true, text: `${kind === 'release' ? 'Release' : 'Refund'} submitted.` });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof WalletUxError ? e.message : 'Something went wrong. Please try again.' });
     } finally { setBusy(false); }
+  }
+
+  function onConfirm() {
+    if (!confirm) return;
+    const { id, kind } = confirm;
+    setConfirm(null);
+    void act(id, kind);
   }
 
   async function link() {
@@ -85,6 +109,8 @@ export default function Account() {
       <a className="cta" href="/api/auth/login?next=/me">Sign in with GitHub</a>
     </>
   );
+
+  const confirmed = confirm ? funded.find((f) => f.id === confirm.id) : undefined;
   return (
     <>
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>Account</p>
@@ -92,7 +118,7 @@ export default function Account() {
       <h2>Wallet</h2>
       {me.wallet ? (
         <>
-          <p>Linked: <code>{me.wallet}</code></p>
+          <p>Linked: <code data-address={me.wallet} title={me.wallet}>{formatAddress(me.wallet).display}</code><CopyButton value={me.wallet} label="wallet address" /></p>
           {readiness && (
             <div className={`panel ${readiness.ready ? 'ok-panel' : 'warn-panel'}`} style={{ marginBottom: '1rem' }}>
               <p style={{ margin: 0 }}>
@@ -122,10 +148,31 @@ export default function Account() {
       {funded.length === 0 ? <p className="muted">Nothing funded from this wallet yet.</p> : funded.map((f) => (
         <div key={f.id} className="card">
           <div className="row"><a href={`/b/${f.id}`}>{f.issueTitle || `Bounty ${f.id}`}</a><span className="badge">{f.status}</span></div>
-          <div className="row muted"><span className="amount">{fromBaseUnits(BigInt(f.amount), 7, 2)}</span>
-            {f.status === 'OPEN' && <span><button disabled={busy} onClick={() => act(f.id, 'release')}>Release</button> <button className="ghost" disabled={busy} onClick={() => act(f.id, 'refund')}>Refund</button></span>}</div>
+          <div className="row muted">
+            <span className="amount">{money(f.amount, f.token, tokens)}</span>
+            {f.status === 'OPEN' && <span>
+              <button disabled={busy} onClick={() => setConfirm({ id: f.id, kind: 'release' })}>Release</button>
+              {' '}
+              {refundWindow(f.deadline).open
+                ? <button className="ghost" disabled={busy} onClick={() => setConfirm({ id: f.id, kind: 'refund' })}>Refund</button>
+                : <small>{refundWindow(f.deadline).label}</small>}
+            </span>}
+          </div>
         </div>
       ))}
+      {confirm && confirmed && (
+        <ConfirmDialog
+          action={confirm.kind}
+          amount={money(confirmed.amount, confirmed.token, tokens)}
+          recipient={confirmed.winnerAddress ?? confirmed.payouts?.[0]?.winnerAddress}
+          busy={busy}
+          onConfirm={onConfirm}
+          onCancel={closeConfirm}
+        />
+      )}
+      <h2>Contributor earnings</h2>
+      {earnings.length === 0 ? <p className="muted">No contributor payouts yet.</p> : earnings.map((e) => <div className="card" key={e.id}><div className="row"><span>{e.bounty.issueTitle || `PR #${e.prNumber}`}</span><span className="badge">{e.status}</span></div><p className="muted amount">{money(e.bounty.amount, e.bounty.token, tokens)} · fee {(e.bounty.feeBps / 100).toFixed(2)}%</p>{e.txHash && <a className="mono" href={explorerTx(e.txHash)} rel="noreferrer noopener">View payout transaction ↗</a>}</div>)}
+      {submitted && <p className="muted" role="status">Tracking confirmation… <a href={explorerTx(submitted)} rel="noreferrer noopener">View transaction ↗</a></p>}
       <p className="muted">We never ask for your secret key; you only sign a message in Freighter.</p>
     </>
   );

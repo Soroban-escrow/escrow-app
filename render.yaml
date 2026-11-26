@@ -1,17 +1,14 @@
 # Render Blueprint: the always-on worker (indexer, webhook consumer, payouts, alerts).
 # The web app and API run on Vercel. Values marked sync: false are asked for once, when the Blueprint is created.
+# Health probes: a worker serves no HTTP, so there is no healthCheckPath here. If the API is ever deployed as a Render
+# web service, point healthCheckPath at /livez (process only), never /readyz, so an RPC blip cannot restart a healthy API.
 services:
   - type: worker
     name: escrow-worker
-    runtime: node
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: node apps/api/dist/worker.mjs
     branch: fresh-build
-    buildCommand: >-
-      npm install -g pnpm@12.16.1 &&
-      pnpm install --frozen-lockfile &&
-      pnpm --filter @skillescrow/contract-client build &&
-      pnpm --filter @skillescrow/api exec prisma generate &&
-      pnpm --filter @skillescrow/api build:worker
-    startCommand: node apps/api/dist/worker.mjs
     envVars:
       - key: NODE_VERSION
         value: "26"

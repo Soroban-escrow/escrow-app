@@ -1,9 +1,11 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { clearSessionCookie } from '../src/auth/github-login.js';
 import { sep53Hash } from '../src/auth/wallet.js';
 import { createSession } from '../src/auth/session.js';
 import { loadConfig } from '../src/config.js';
 import { createDb } from '../src/db.js';
+import type { ApiDeps } from '../src/routes/api.js';
 import { buildServer } from '../src/server.js';
 
 const db = createDb(process.env.TEST_DATABASE_URL ?? 'postgresql://skillescrow:skillescrow@localhost:5432/skillescrow_test');
@@ -11,8 +13,22 @@ afterAll(() => db.$disconnect());
 const cfg = loadConfig({ DATABASE_URL: 'x', BOUNTY_CONTRACT_ID: 'CCEKBPYCWKNTXIQLXJHVAF7RYGUZZ6MITA7VVJBOK5BHXUO44ELZ4F4V', SESSION_SECRET: 's'.repeat(32), CSRF_SECRET: 'c'.repeat(32), GITHUB_WEBHOOK_SECRET: 'hooksecret', LOG_LEVEL: 'silent' });
 
 let linked: bigint[];
-const app = async () =>
-  buildServer(cfg, { insert: async () => true, enqueue: async () => {} }, { db, csrfSecret: cfg.CSRF_SECRET, onWalletLinked: async (g) => void linked.push(g) });
+const app = async (overrides: Partial<ApiDeps> = {}) =>
+  buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
+    db,
+    csrfSecret: cfg.CSRF_SECRET,
+    onWalletLinked: async (g) => void linked.push(g),
+    walletFollowUpRetry: { attempts: 2, delayMs: () => 0 },
+    ...overrides,
+  });
+
+const waitFor = async (cond: () => boolean) => {
+  for (let i = 0; i < 100; i++) {
+    if (cond()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('condition not met in time');
+};
 
 async function login(login = 'alice', githubId = 1n) {
   const u = await db.user.create({ data: { githubId, githubLogin: login } });
@@ -37,6 +53,17 @@ describe('auth and CSRF', () => {
     const a = await app();
     expect((await a.inject('/auth/me')).statusCode).toBe(401);
     expect((await a.inject({ url: '/auth/me', headers: { cookie: 'se_session=nothex' } })).statusCode).toBe(401);
+  });
+  it('reads the session cookie next to cookies whose values contain = (#163)', async () => {
+    const a = await app();
+    const { cookie } = await login();
+    const sid = cookie.split('=')[1]!;
+    // Before #163, `split('=')` cut base64 values and a later duplicate could
+    // replace the session; both must leave the real session readable.
+    const headers = { cookie: `oauth=YWJjZA==; theme=a=b; se_session=${sid}; se_session=${'f'.repeat(64)}` };
+    const me = await a.inject({ url: '/auth/me', headers });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().login).toBe('alice');
   });
   it('returns the profile and a CSRF token; expired sessions are refused', async () => {
     const a = await app();
@@ -63,6 +90,18 @@ describe('auth and CSRF', () => {
     expect((await a.inject({ method: 'POST', url: '/auth/logout', headers: { cookie, 'x-csrf-token': t } })).statusCode).toBe(200);
     expect((await a.inject({ url: '/auth/me', headers: { cookie } })).statusCode).toBe(401);
   });
+  it('logout clears the session cookie with the same Secure flag the login set (#167)', async () => {
+    const loginDeps = { db, clientId: 'Iv1.test', clientSecret: 'shh', callbackUrl: 'https://api.example.test/auth/callback', webUrl: 'https://example.test', secret: 's'.repeat(32), adminGithubIds: [] };
+    const a = await app({ login: loginDeps });
+    // each logout destroys its session, so each route gets a fresh one
+    for (const [url, n] of [['/auth/logout', 1n], ['/auth/logout-all', 2n]] as const) {
+      const { cookie } = await login(`user${n}`, n);
+      const t = await csrf(a, cookie);
+      const r = await a.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': t } });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['set-cookie']).toBe(clearSessionCookie(true));
+    }
+  });
 });
 
 describe('wallet over HTTP', () => {
@@ -76,10 +115,31 @@ describe('wallet over HTTP', () => {
     const v = await a.inject({ method: 'POST', url: '/wallet/verify', headers: h, payload: { challengeId: c.challengeId, signature: sig } });
     expect(v.statusCode).toBe(200);
     expect((await db.user.findUniqueOrThrow({ where: { id: u.id } })).wallet).toBe(kp.publicKey());
+    await waitFor(() => linked.length === 1);
     expect(linked).toEqual([1n]);
     const again = await a.inject({ method: 'POST', url: '/wallet/verify', headers: h, payload: { challengeId: c.challengeId, signature: sig } });
     expect(again.statusCode).toBe(409);
     expect(again.json().error.code).toBe('challenge_used');
+  });
+  it('returns 200 with the linked address when the payout follow-up throws', async () => {
+    const attempted: bigint[] = [];
+    const a = await app({
+      onWalletLinked: async (g) => {
+        attempted.push(g);
+        throw new Error('RPC unavailable');
+      },
+    });
+    const { u, cookie } = await login();
+    const h = { cookie, 'x-csrf-token': await csrf(a, cookie) };
+    const kp = Keypair.random();
+    const c = (await a.inject({ method: 'POST', url: '/wallet/challenge', headers: h, payload: { address: kp.publicKey() } })).json();
+    const sig = kp.sign(sep53Hash(c.message)).toString('base64');
+    const v = await a.inject({ method: 'POST', url: '/wallet/verify', headers: h, payload: { challengeId: c.challengeId, signature: sig } });
+    expect(v.statusCode).toBe(200);
+    expect(v.json().address).toBe(kp.publicKey());
+    expect((await db.user.findUniqueOrThrow({ where: { id: u.id } })).wallet).toBe(kp.publicKey());
+    await waitFor(() => attempted.length > 0);
+    expect(attempted[0]).toBe(1n);
   });
   it('bad input gives the standard error shape', async () => {
     const a = await app();
@@ -107,8 +167,32 @@ describe('public reads', () => {
     expect((await a.inject('/bounties?sort=ending')).json().items[0].id).toBe('1');
     expect((await a.inject('/bounties?minAmount=2500')).json().items).toHaveLength(1);
     expect((await a.inject('/bounties?q=issue%202')).json().items).toHaveLength(1);
+    expect((await a.inject('/bounties?q=ISSUE%202')).json().items).toHaveLength(1);
+    expect((await a.inject('/bounties?q=o%2Frepo')).json().items).toHaveLength(3);
     expect((await a.inject('/bounties?status=RELEASED')).json().items).toHaveLength(1);
     expect((await a.inject('/bounties?status=bogus')).statusCode).toBe(400);
+  });
+  it('filters by token, repository, and combined status; exposes available filter options', async () => {
+    const a = await app();
+    await db.repo.create({ data: { id: 101n, installationId: 1n, fullName: 'o/Other', private: false } });
+    await bounty(1n, { token: 'TOKEN_A', status: 'OPEN' });
+    await bounty(2n, { token: 'TOKEN_B', status: 'RELEASED' });
+    await db.bounty.create({ data: { id: 3n, repoId: 101n, issueNumber: 3, issueTitle: 'Third', issueUrl: '', criteria: [], maintainer: 'GM', token: 'TOKEN_A', amount: '3000', feeBps: 300, deadline: new Date(2030, 0, 3), relayerAllowed: true, status: 'DISPUTED', fundTx: 't', createdAt: new Date(), updatedAt: new Date() } });
+    expect((await a.inject('/bounties?token=TOKEN_A&repo=o%2FRepo&status=OPEN')).json().items.map((x: { id: string }) => x.id)).toEqual(['1']);
+    expect((await a.inject('/bounties?status=ALL')).json().items).toHaveLength(3);
+    expect((await a.inject('/filters')).json()).toEqual({ statuses: ['OPEN', 'RELEASED', 'REFUNDED', 'DISPUTED'], tokens: ['TOKEN_A', 'TOKEN_B'], repositories: ['o/Other', 'o/Repo'] });
+  });
+  it('publishes live contract fee and token precision and limits', async () => {
+    const a = await buildServer(cfg, { insert: async () => true, remove: async () => {}, enqueue: async () => {} }, {
+      db, csrfSecret: cfg.CSRF_SECRET, tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6 }],
+      chain: {
+        getConfig: async () => ({ fee_bps: 275, grace_secs: 3600n, min_duration_secs: 86400n, max_duration_secs: 2592000n }),
+        getTokenLimits: async () => ({ min_amount: 100n, max_amount: 999999n }),
+        buildFundTx: async () => '', buildReleaseTx: async () => '', buildRefundTx: async () => '', submitSigned: async () => '', getBounty: async () => ({ status: 'Open' }),
+        buildOpenDisputeTx: async () => '', buildResolveTx: async () => '',
+      },
+    });
+    expect((await a.inject('/config')).json()).toEqual({ feeBps: 275, graceSecs: '3600', minDurationSecs: '86400', maxDurationSecs: '2592000', tokens: [{ address: 'TOKEN_A', symbol: 'USD6', decimals: 6, minAmount: '100', maxAmount: '999999' }] });
   });
   it('bounty detail: 404s and a 200 with PRs and payouts', async () => {
     const a = await app();
@@ -123,14 +207,79 @@ describe('public reads', () => {
     const a = await app();
     const { u, cookie } = await login();
     await bounty(1n); await bounty(2n);
-    await db.payout.create({ data: { bountyId: 1n, prNumber: 1, winnerGithubId: u.githubId, status: 'CONFIRMED', idempotencyKey: 'release:1', txHash: 'H' } });
+    await bounty(3n, { token: 'TOKEN_B', amount: '2000', feeBps: 0 });
+    const first = new Date('2026-01-03T00:00:00.000Z');
+    const second = new Date('2026-02-04T00:00:00.000Z');
+    await db.payout.create({ data: { bountyId: 1n, prNumber: 1, winnerGithubId: u.githubId, status: 'CONFIRMED', idempotencyKey: 'release:1', txHash: 'H', createdAt: second } });
+    await db.payout.create({ data: { bountyId: 3n, prNumber: 1, winnerGithubId: u.githubId, status: 'CONFIRMED', idempotencyKey: 'release:3', createdAt: first } });
     await db.payout.create({ data: { bountyId: 2n, prNumber: 1, winnerGithubId: u.githubId, status: 'QUEUED', idempotencyKey: 'release:2' } });
     expect((await a.inject('/me/earnings')).statusCode).toBe(401);
-    expect((await a.inject({ url: '/me/earnings', headers: { cookie } })).json()).toHaveLength(2);
+    expect((await a.inject({ url: '/me/earnings', headers: { cookie } })).json()).toHaveLength(3);
     const pub = (await a.inject('/users/ALICE')).json();
-    expect(pub.paid).toHaveLength(1);
+    expect(pub.paid).toHaveLength(2);
     expect(pub.paid[0].txHash).toBe('H');
+    expect(pub.earnedByToken).toEqual([{ token: 'C', amount: '970' }, { token: 'TOKEN_B', amount: '2000' }]);
+    expect(pub.paidCount).toBe(2);
+    expect(pub.firstPayoutAt).toBe(first.toISOString());
+    await db.payout.deleteMany({ where: { winnerGithubId: u.githubId } });
+    const empty = (await a.inject('/users/ALICE')).json();
+    expect(empty.earnedByToken).toEqual([]);
+    expect(empty.paidCount).toBe(0);
+    expect(empty.firstPayoutAt).toBeNull();
     expect((await a.inject('/users/nobody')).statusCode).toBe(404);
+  });
+});
+
+describe('private repositories', () => {
+  it('excludes private-repo bounties from public reads, but keeps them visible to the maintainer', async () => {
+    const a = await app();
+    await db.repo.create({ data: { id: 102n, installationId: 1n, fullName: 'o/Secret', private: true } });
+    await bounty(1n, { token: 'PUBLIC_TOKEN' });
+    await db.bounty.create({ data: {
+      id: 2n, repoId: 102n, issueNumber: 2, issueTitle: 'Secret issue', issueUrl: '',
+      criteria: ['secret criteria'], maintainer: 'GMAINTAINER', token: 'SECRET_TOKEN',
+      amount: '9000', feeBps: 300, deadline: new Date(2030, 0, 2), relayerAllowed: true,
+      status: 'OPEN', fundTx: 't', createdAt: new Date(),
+    } });
+
+    // list and filters do not disclose the private repo or its token
+    const list = (await a.inject('/bounties?status=ALL')).json();
+    expect(list.items.map((x: { id: string }) => x.id)).toEqual(['1']);
+    expect((await a.inject('/bounties?q=secret')).json().items).toHaveLength(0);
+    const filters = (await a.inject('/filters')).json();
+    expect(filters.repositories).toEqual(['o/Repo']);
+    expect(filters.tokens).toEqual(['PUBLIC_TOKEN']);
+
+    // detail is a 404, indistinguishable from a missing bounty
+    expect((await a.inject('/bounties/2')).statusCode).toBe(404);
+    expect((await a.inject('/bounties/1')).statusCode).toBe(200);
+
+    // the public profile omits payouts from private bounties
+    const winner = await login('winner', 99n);
+    await db.payout.create({ data: { bountyId: 1n, prNumber: 1, winnerGithubId: winner.u.githubId, status: 'CONFIRMED', idempotencyKey: 'public', txHash: 'PUB' } });
+    await db.payout.create({ data: { bountyId: 2n, prNumber: 2, winnerGithubId: winner.u.githubId, status: 'CONFIRMED', idempotencyKey: 'private', txHash: 'PRIV' } });
+    const profile = (await a.inject('/users/WINNER')).json();
+    expect(profile.paid).toHaveLength(1);
+    expect(profile.paid[0].txHash).toBe('PUB');
+
+    // the maintainer still sees the private bounty on /me
+    const maintainer = await db.user.create({ data: { githubId: 77n, githubLogin: 'maintainer', wallet: 'GMAINTAINER' } });
+    const session = await createSession(db, maintainer.id);
+    const funded = (await a.inject({ url: '/me/funded', headers: { cookie: `se_session=${session.id}` } })).json();
+    expect(funded.map((x: { id: string }) => x.id)).toEqual(['2']);
+  });
+});
+
+describe('maintainer reads', () => {
+  it('exposes the pending payout recipient so the web app can confirm a release', async () => {
+    const a = await app();
+    await bounty(1n);
+    const maintainer = await db.user.create({ data: { githubId: 78n, githubLogin: 'maint', wallet: 'GM' } });
+    const winner = await db.user.create({ data: { githubId: 79n, githubLogin: 'winner' } });
+    await db.payout.create({ data: { bountyId: 1n, prNumber: 7, winnerGithubId: winner.githubId, winnerAddress: 'GWINNER', status: 'AWAITING_MAINTAINER', idempotencyKey: 'pending-release' } });
+    const session = await createSession(db, maintainer.id);
+    const funded = (await a.inject({ url: '/me/funded', headers: { cookie: `se_session=${session.id}` } })).json();
+    expect(funded[0].payouts[0].winnerAddress).toBe('GWINNER');
   });
 });
 

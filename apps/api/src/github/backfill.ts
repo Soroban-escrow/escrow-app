@@ -1,4 +1,5 @@
 import type { Db } from '../db.js';
+import { replayUntrackedFunds } from '../indexer/replay.js';
 
 interface Source {
   listInstallations(): Promise<{ id: number; account: { login: string; type: string }; suspended_at: string | null }[]>;
@@ -19,9 +20,10 @@ export async function syncInstallations(db: Db, gh: Source): Promise<{ installat
     if (suspendedAt) continue;
     for (const r of await gh.listRepositories(id)) {
       await db.repo.upsert({
-        where: { id: BigInt(r.id) }, create: { id: BigInt(r.id), installationId: id, fullName: r.full_name, private: r.private },
-        update: { installationId: id, fullName: r.full_name, private: r.private },
+        where: { id: BigInt(r.id) }, create: { id: BigInt(r.id), installationId: id, fullName: r.full_name, private: r.private, active: true },
+        update: { installationId: id, fullName: r.full_name, private: r.private, active: true },
       });
+      await replayUntrackedFunds(db, BigInt(r.id));
       repos++;
     }
   }

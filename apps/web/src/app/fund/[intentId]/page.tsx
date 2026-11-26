@@ -1,10 +1,11 @@
 'use client';
 import { use, useCallback, useEffect, useState } from 'react';
-import { fromBaseUnits } from '@skillescrow/shared/src/amounts';
 import { errorText } from '@/lib/errors';
-import { connect, signTx, WalletUxError } from '@/lib/freighter';
+import { explorerTx, money, type TokenInfo } from '@/lib/api';
+import { connect, signTx, WalletUxError } from '@/lib/wallet';
 
 interface Intent { state: 'open' | 'expired' | 'used'; repo: string | null; issueNumber: number; token: string; amount: string; durationDays: number; bountyId: string | null }
+interface Config { feeBps: number | null; tokens: TokenInfo[] }
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015';
 
 export default function Fund({ params }: { params: Promise<{ intentId: string }> }) {
@@ -14,13 +15,20 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
   const [auto, setAuto] = useState(true);
   const [step, setStep] = useState<'idle' | 'signing' | 'waiting'>('idle');
   const [err, setErr] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
+  const [feeBps, setFeeBps] = useState<number | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/intents/${encodeURIComponent(intentId)}`);
     setIntent(r.ok ? ((await r.json()) as Intent) : null);
   }, [intentId]);
 
-  useEffect(() => { void load(); fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then((m) => setCsrf(m?.csrfToken ?? null), () => setCsrf(null)); }, [load]);
+  useEffect(() => {
+    void load();
+    fetch('/api/auth/me').then((r) => (r.ok ? r.json() : null)).then((m) => setCsrf(m?.csrfToken ?? null), () => setCsrf(null));
+    fetch('/api/config').then((r) => (r.ok ? (r.json() as Promise<Config>) : null)).then((c) => { setTokens(c?.tokens ?? []); setFeeBps(c?.feeBps ?? null); }, () => { setTokens([]); setFeeBps(null); });
+  }, [load]);
 
   // after submitting, wait for the indexer to mark the intent used, then go to the bounty
   useEffect(() => {
@@ -44,9 +52,10 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
       if (!b.ok) throw new WalletUxError(errorText(bj.error?.code, bj.error?.message ?? 'Could not prepare the transaction.'));
       setStep('signing');
       const signed = await signTx(bj.xdr, address, PASSPHRASE);
-      const s = await fetch('/api/tx/submit', { method: 'POST', headers: h, body: JSON.stringify({ xdr: signed, address }) });
+      const s = await fetch('/api/tx/submit', { method: 'POST', headers: h, body: JSON.stringify({ xdr: signed, address, intentId }) });
       const sj = await s.json();
       if (!s.ok) throw new WalletUxError(errorText(sj.error?.code, 'The network rejected the transaction.'));
+      setTxHash(sj.hash);
       setStep('waiting');
     } catch (e) {
       setStep('idle');
@@ -56,13 +65,14 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
 
   if (intent === undefined) return <p className="muted">Loading…</p>;
   if (intent === null) return <><h1>Funding link not found</h1><p className="muted">Check the link, or comment <code>/bounty</code> on the issue again.</p></>;
-  const amount = fromBaseUnits(BigInt(intent.amount), 7, 2);
+  const amount = money(intent.amount, intent.token, tokens);
   return (
     <>
       <p className="eyebrow" style={{ marginTop: '2.5rem' }}>{intent.repo ?? 'repository'} #{intent.issueNumber}</p>
       <h1>Fund bounty</h1>
       <section className="panel">
-      <p className="big locked" style={{ display: 'inline-block', margin: 0 }}>{amount}</p>
+      <p className="big locked" style={{ display: 'inline-block', margin: 0 }} title={tokens.some((t) => t.address === intent.token) ? undefined : `Unknown token ${intent.token}`}>{amount}</p>
+      {feeBps !== null && <p className="muted">Platform fee: {(feeBps / 100).toFixed(2)}% · deducted from the contributor payout.</p>}
       <p className="muted">Held in escrow for {intent.durationDays} days, then refundable if nothing is merged.</p>
       {intent.state === 'expired' && <p className="error" role="alert">{errorText('intent_expired', 'Expired.')}</p>}
       {intent.state === 'used' && <p className="ok">{errorText('intent_used', 'Funded.')} {intent.bountyId && <a href={`/b/${intent.bountyId}`}>View the bounty</a>}</p>}
@@ -71,7 +81,10 @@ export default function Fund({ params }: { params: Promise<{ intentId: string }>
           {!csrf && <p className="muted"><a href={`/api/auth/login?next=${encodeURIComponent(`/fund/${intentId}`)}`}>Sign in with GitHub</a> as the person who requested this bounty to continue.</p>}
           <label className="check"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Pay automatically when I merge a PR (recommended)</label>
           <p className="muted">{auto ? 'A relayer may release this bounty when you merge, capped by the escrow limits.' : 'You will sign the release yourself after merging.'}</p>
-          <button onClick={fund} disabled={!csrf || step !== 'idle'}>{step === 'signing' ? 'Confirm in Freighter…' : step === 'waiting' ? 'Waiting for confirmation…' : 'Connect wallet and fund'}</button>
+          {!tokens.some((t) => t.address === intent.token) && <p className="error" role="alert">This token is not available in the current configuration.</p>}
+          <p className="muted small">Before signing, confirm this account has enough balance and a trustline for the selected token. Freighter will show the exact transaction for review.</p>
+          <button onClick={fund} disabled={!csrf || step !== 'idle' || !tokens.some((t) => t.address === intent.token)}>{step === 'signing' ? 'Confirm in Freighter…' : step === 'waiting' ? 'Waiting for confirmation…' : 'Connect wallet and fund'}</button>
+          {txHash && <p className="muted" role="status">Transaction submitted. Tracking confirmation… <a href={explorerTx(txHash)} rel="noreferrer noopener">View transaction ↗</a></p>}
           {err && <p className="error" role="alert">{err}</p>}
           <p className="muted small">You need a USDC trustline on your account for USDC bounties. We never ask for your secret key.</p>
         </>

@@ -10,6 +10,8 @@ export interface PayoutDeps {
 }
 
 const key = (bountyId: bigint) => `release:${bountyId}`;
+/** Marks a payout that was refused because the winner's wallet is the maintainer's. Retryable. */
+export const MAINTAINER_CONFLICT = 'winner is the maintainer';
 const safeNotify = async (d: PayoutDeps, b: bigint, pr: number, m: string) => {
   try { await d.notifier.notify(b, pr, m); } catch { /* comments are best effort */ }
 };
@@ -22,7 +24,10 @@ export async function onMerge(
   d: PayoutDeps, p: { bountyId: bigint; prNumber: number; authorGithubId: bigint },
 ): Promise<'created' | 'duplicate' | 'not-open'> {
   const chain = await d.chain.getBounty(p.bountyId);
-  if (chain.status !== 'Open') return 'not-open';
+  if (chain.status !== 'Open') {
+    await safeNotify(d, p.bountyId, p.prNumber, `This bounty is ${chain.status} on chain, so this merged PR cannot be paid. No action is needed from you.`);
+    return 'not-open';
+  }
   try {
     await d.db.payout.create({
       data: {
@@ -41,25 +46,33 @@ export async function onMerge(
   return 'created';
 }
 
-/** Moves a PENDING_WALLET payout forward (also used when a wallet is linked late). */
+/**
+ * Moves a PENDING_WALLET payout forward (also used when a wallet is linked late, or to retry a
+ * payout that was refused because the winner was the maintainer).
+ */
 export async function advance(d: PayoutDeps, bountyId: bigint): Promise<string> {
   const payout = await d.db.payout.findUnique({ where: { idempotencyKey: key(bountyId) } });
-  if (!payout || payout.status !== 'PENDING_WALLET') return payout?.status ?? 'none';
+  if (!payout) return 'none';
+  const retryingConflict = payout.status === 'FAILED' && payout.lastError === MAINTAINER_CONFLICT;
+  if (payout.status !== 'PENDING_WALLET' && !retryingConflict) return payout.status;
   const chain = await d.chain.getBounty(bountyId);
   if (chain.status !== 'Open') return 'not-open';
   const user = await d.db.user.findUnique({ where: { githubId: payout.winnerGithubId } });
   if (!user?.wallet) {
+    if (retryingConflict) await d.db.payout.update({ where: { id: payout.id }, data: { status: 'PENDING_WALLET', lastError: null } });
     await safeNotify(d, bountyId, payout.prNumber, `Link your wallet at ${d.webUrl}/me to receive your payout.`);
     return 'PENDING_WALLET';
   }
   if (user.wallet === chain.maintainer) {
-    await d.db.payout.update({ where: { id: payout.id }, data: { status: 'FAILED', lastError: 'winner is the maintainer' } });
+    await d.db.payout.update({ where: { id: payout.id }, data: { status: 'FAILED', lastError: MAINTAINER_CONFLICT } });
+    await safeNotify(d, bountyId, payout.prNumber, `This payout is on hold: the wallet you linked is the same one the maintainer used to fund this bounty. Please link a different wallet at ${d.webUrl}/me and we will retry automatically.`);
     return 'FAILED';
   }
   const status = chain.relayerAllowed ? 'QUEUED' : 'AWAITING_MAINTAINER';
-  // guarded update: only one caller can move it out of PENDING_WALLET
+  // guarded update: only one caller can move it out of its retryable state
   const r = await d.db.payout.updateMany({
-    where: { id: payout.id, status: 'PENDING_WALLET' }, data: { status, winnerAddress: user.wallet },
+    where: { id: payout.id, status: { in: ['PENDING_WALLET', 'FAILED'] } },
+    data: { status, winnerAddress: user.wallet, lastError: null },
   });
   if (r.count === 0) return 'raced';
   if (status === 'AWAITING_MAINTAINER') {
@@ -68,9 +81,14 @@ export async function advance(d: PayoutDeps, bountyId: bigint): Promise<string> 
   return status;
 }
 
-/** Late wallet link: continue every pending payout for that GitHub user. */
+/** Late wallet link: continue every payout for that GitHub user that can still move forward. */
 export async function onWalletLinked(d: PayoutDeps, githubId: bigint): Promise<number> {
-  const pending = await d.db.payout.findMany({ where: { winnerGithubId: githubId, status: 'PENDING_WALLET' } });
+  const pending = await d.db.payout.findMany({
+    where: {
+      winnerGithubId: githubId,
+      OR: [{ status: 'PENDING_WALLET' }, { status: 'FAILED', lastError: MAINTAINER_CONFLICT }],
+    },
+  });
   for (const p of pending) await advance(d, p.bountyId);
   return pending.length;
 }

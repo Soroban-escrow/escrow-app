@@ -1,8 +1,54 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
+
+/** Fastify's `trustProxy`: no proxy, a number of proxy hops, or a list of trusted proxy addresses/CIDRs. */
+export type TrustProxy = false | number | string[];
+
+const MAX_PROXY_HOPS = 10;
+// Names understood by Fastify's proxy-addr: loopback, link-local and private ranges.
+const PROXY_KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
+const TRUST_ALL = 'trusts every client-supplied X-Forwarded-For, so anyone can spoof their IP and dodge rate limits; use a hop count (such as 1) or the CIDR ranges of your proxies';
+
+/** Problem with one trusted-proxy entry (IP, CIDR or keyword), or null if it is fine. */
+function badProxyEntry(entry: string): string | null {
+  if (PROXY_KEYWORDS.has(entry)) return null;
+  const [address, prefix, extra] = entry.split('/');
+  const family = isIP(address);
+  if (!family || extra !== undefined) return `"${entry}" is not an IP address, CIDR range or one of ${[...PROXY_KEYWORDS].join('/')}`;
+  if (prefix === undefined) return null;
+  if (!/^\d+$/.test(prefix) || Number(prefix) > (family === 4 ? 32 : 128)) return `"${entry}" has an invalid prefix length`;
+  if (Number(prefix) === 0) return `"${entry}" ${TRUST_ALL}`;
+  return null;
+}
+
+/**
+ * Parse TRUST_PROXY. Unset, empty, "false" or "0" trust no proxy (req.ip is the socket address).
+ * A number is how many proxy hops sit in front of the API; otherwise a comma/space separated list of
+ * proxy IPs, CIDR ranges or keywords. "true" and /0 ranges are rejected because they trust everything.
+ */
+export function parseTrustProxy(raw: string): { ok: true; value: TrustProxy } | { ok: false; error: string } {
+  const text = raw.trim().toLowerCase();
+  if (text === '' || text === 'false') return { ok: true, value: false };
+  if (text === 'true') return { ok: false, error: `"true" ${TRUST_ALL}` };
+  if (/^\d+$/.test(text)) {
+    const hops = Number(text);
+    if (hops === 0) return { ok: true, value: false };
+    if (hops > MAX_PROXY_HOPS) return { ok: false, error: `a hop count must be between 1 and ${MAX_PROXY_HOPS}` };
+    return { ok: true, value: hops };
+  }
+  const entries = text.split(/[\s,]+/).filter(Boolean);
+  for (const entry of entries) {
+    const problem = badProxyEntry(entry);
+    if (problem) return { ok: false, error: problem };
+  }
+  return { ok: true, value: entries };
+}
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.string().default('info'),
+  // Dedicated high-entropy token for Prometheus. Without it /metrics is disabled.
+  METRICS_TOKEN: z.string().min(32).optional(),
   PORT: z.coerce.number().int().default(3001),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().default('redis://localhost:6379'),
@@ -32,6 +78,14 @@ const schema = z.object({
   ALERT_WEBHOOK_URL: z.string().url().optional(),
   TOKEN_USDC_CONTRACT_ID: z.string().default(''),
   TOKEN_XLM_CONTRACT_ID: z.string().default(''),
+  // Behind Render/Vercel/any proxy, req.ip is the proxy unless told how many hops (or which CIDRs) to trust.
+  // Off by default: trusting X-Forwarded-For without a proxy in front lets clients pick their own IP.
+  TRUST_PROXY: z.string().default('').transform((raw, ctx) => {
+    const r = parseTrustProxy(raw);
+    if (r.ok) return r.value;
+    ctx.addIssue({ code: 'custom', message: r.error });
+    return z.NEVER;
+  }),
 }).refine((c) => {
   const set = [c.GITHUB_APP_ID, c.GITHUB_APP_SLUG, c.GITHUB_APP_PRIVATE_KEY, c.GITHUB_CLIENT_ID, c.GITHUB_CLIENT_SECRET].filter(Boolean).length;
   return set === 0 || set === 5;

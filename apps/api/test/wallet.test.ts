@@ -14,7 +14,7 @@ const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: WalletError) 
 let u1: string, u2: string;
 beforeEach(async () => {
   t = new Date('2026-11-02T10:00:00Z');
-  await db.$executeRawUnsafe('TRUNCATE "WalletChallenge","Session","User" CASCADE');
+  await db.$executeRawUnsafe('TRUNCATE "WalletChallenge","Session","User","AuditLog" CASCADE');
   u1 = (await db.user.create({ data: { githubId: 1n, githubLogin: 'alice' } })).id;
   u2 = (await db.user.create({ data: { githubId: 2n, githubLogin: 'bob' } })).id;
 });
@@ -81,5 +81,48 @@ describe('wallet linking', () => {
     await verifyChallenge(d(), u1, c.challengeId, sign(kp, c.message));
     await unlinkWallet(d(), u1);
     expect((await db.user.findUniqueOrThrow({ where: { id: u1 } })).wallet).toBeNull();
+  });
+});
+
+describe('wallet audit log', () => {
+  const link = async (userId: string, kp: Keypair) => {
+    const c = await createChallenge(d(), userId, kp.publicKey());
+    await verifyChallenge(d(), userId, c.challengeId, sign(kp, c.message));
+  };
+  const entries = () => db.auditLog.findMany({ orderBy: { createdAt: 'asc' } });
+
+  it('records wallet.linked with no old address on first link', async () => {
+    const kp = Keypair.random();
+    await link(u1, kp);
+    const log = await entries();
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ actor: 'user:1', action: 'wallet.linked', target: `user:${u1}`, data: { old: null, new: kp.publicKey() } });
+  });
+  it('records the old and new address when the wallet is changed', async () => {
+    const first = Keypair.random();
+    const second = Keypair.random();
+    await link(u1, first);
+    await link(u1, second);
+    const log = await entries();
+    expect(log.map((e) => e.action)).toEqual(['wallet.linked', 'wallet.linked']);
+    expect(log[1].data).toEqual({ old: first.publicKey(), new: second.publicKey() });
+  });
+  it('records wallet.unlinked with the removed address', async () => {
+    const kp = Keypair.random();
+    await link(u1, kp);
+    await unlinkWallet(d(), u1);
+    const log = await entries();
+    expect(log.map((e) => e.action)).toEqual(['wallet.linked', 'wallet.unlinked']);
+    expect(log[1]).toMatchObject({ actor: 'user:1', target: `user:${u1}`, data: { old: kp.publicKey(), new: null } });
+  });
+  it('writes nothing when unlinking a user who has no wallet', async () => {
+    await unlinkWallet(d(), u2);
+    expect(await entries()).toHaveLength(0);
+  });
+  it('does not audit a link attempt that fails verification', async () => {
+    const kp = Keypair.random();
+    const c = await createChallenge(d(), u1, kp.publicKey());
+    expect(await code(verifyChallenge(d(), u1, c.challengeId, sign(Keypair.random(), c.message)))).toBe('bad_signature');
+    expect(await entries()).toHaveLength(0);
   });
 });
